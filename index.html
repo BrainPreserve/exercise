@@ -5,58 +5,60 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Brain Health Exercise — Daily Plan</title>
   <link rel="stylesheet" href="assets/styles.css" />
-  <meta name="description" content="Evidence-based, cognition-focused exercise planning with safety gates and deterministic coaching." />
+  <meta name="description" content="Evidence-based, cognition-focused exercise planning with safety gates and deterministic + AI addendum coaching." />
 </head>
 <body>
   <header class="app-header">
     <h1>Brain Health Exercise — Daily Plan</h1>
-    <p class="tagline">Evidence-based sessions that adapt to HRV, sleep, BP, glucose, and inflammation.</p>
+    <p class="tagline">Plans adapt to HRV, sleep, BP, glucose, and inflammation — with conservative safety gates.</p>
+
     <nav class="tabs" aria-label="Primary">
       <button class="tab active" data-tab="plan">Plan</button>
       <button class="tab" data-tab="library">Library</button>
       <button class="tab" data-tab="progress">Progress</button>
-      <!-- Data tab appears only in Admin mode -->
+      <button class="tab" data-tab="ask">Ask</button>
+      <!-- Data tab is injected only in admin mode -->
       <button class="tab admin-only" data-tab="data" hidden>Data</button>
       <a id="disableAdmin" class="admin-only small-link" hidden href="#" title="Disable Admin">Disable Admin</a>
     </nav>
   </header>
 
   <main>
-    <!-- ===== PLAN ===== -->
+    <!-- ================= PLAN ================= -->
     <section id="plan" class="view active" aria-labelledby="Plan">
       <div class="grid-2">
         <div class="card">
           <h2>Today’s Inputs</h2>
-          <p class="help">Enter today’s metrics. Your plan will adapt with conservative, cognition-safe gates.</p>
+          <p class="help">Enter today’s metrics. The engine applies safety gates first, then recommends protocols.</p>
 
           <form id="metrics-form" class="form-grid" autocomplete="off">
             <div>
               <label for="hrvBaseline">HRV 7-day baseline (ms)</label>
-              <input id="hrvBaseline" name="hrvBaseline" type="number" min="1" step="1" placeholder="e.g., 40" required />
+              <input id="hrvBaseline" type="number" min="1" step="1" placeholder="e.g., 40" required />
             </div>
             <div>
               <label for="hrvToday">HRV today (ms)</label>
-              <input id="hrvToday" name="hrvToday" type="number" min="1" step="1" placeholder="e.g., 36" required />
+              <input id="hrvToday" type="number" min="1" step="1" placeholder="e.g., 36" required />
             </div>
             <div>
               <label for="sleepEff">Sleep efficiency (%)</label>
-              <input id="sleepEff" name="sleepEff" type="number" min="0" max="100" step="0.1" placeholder="e.g., 86" required />
+              <input id="sleepEff" type="number" min="0" max="100" step="0.1" placeholder="e.g., 86" required />
             </div>
             <div>
               <label for="sbp">SBP (mmHg)</label>
-              <input id="sbp" name="sbp" type="number" min="60" max="260" step="1" placeholder="e.g., 128" required />
+              <input id="sbp" type="number" min="60" max="260" step="1" placeholder="e.g., 128" required />
             </div>
             <div>
               <label for="dbp">DBP (mmHg)</label>
-              <input id="dbp" name="dbp" type="number" min="30" max="160" step="1" placeholder="e.g., 78" required />
+              <input id="dbp" type="number" min="30" max="160" step="1" placeholder="e.g., 78" required />
             </div>
             <div>
               <label for="tir">CGM Time-in-Range 70–180 (%)</label>
-              <input id="tir" name="tir" type="number" min="0" max="100" step="0.1" placeholder="e.g., 72" required />
+              <input id="tir" type="number" min="0" max="100" step="0.1" placeholder="e.g., 72" required />
             </div>
             <div>
               <label for="crp">hs-CRP (mg/L)</label>
-              <input id="crp" name="crp" type="number" min="0" step="0.1" placeholder="e.g., 2.1" required />
+              <input id="crp" type="number" min="0" step="0.1" placeholder="e.g., 2.1" required />
             </div>
 
             <!-- Exercise Focus (Plan) -->
@@ -71,8 +73,9 @@
 
             <div class="full">
               <label for="notes">Optional notes</label>
-              <input id="notes" name="notes" type="text" maxlength="160" placeholder="e.g., Mild DOMS; afternoon workout" />
+              <input id="notes" type="text" maxlength="160" placeholder="e.g., Mild DOMS; afternoon workout" />
             </div>
+
             <div class="actions full">
               <button type="button" id="saveMetrics">Save Today</button>
               <button type="button" id="genPlan" class="primary">Generate Today’s Plan</button>
@@ -82,7 +85,7 @@
 
           <p class="disclaimer small">
             Safety: stop for chest pain, severe shortness of breath, dizziness, near-fall, or SBP ≥ 180 mmHg.
-            This is not a medical device nor emergency service.
+            Educational use only; not a medical device.
           </p>
         </div>
 
@@ -95,37 +98,85 @@
       </div>
     </section>
 
-    <!-- ===== LIBRARY ===== -->
+    <!-- ================= LIBRARY ================= -->
     <section id="library" class="view" aria-labelledby="Library">
       <div class="card">
         <h2>Protocol Library</h2>
-        <p class="help">Select one or more exercise types. If none are selected, all protocols are shown.</p>
+        <p class="help">Select filters. If none are selected, all protocols are shown (after safety gates).</p>
 
-        <div class="toolbar vertical">
-          <!-- Dynamic multi-select checkboxes filled from CSV exercise types -->
-          <div id="libTypeFilters" class="checkbox-grid" aria-label="Exercise types"></div>
-
-          <!-- Library Exercise Focus radios -->
-          <fieldset class="mt8">
-            <legend>Exercise Focus</legend>
-            <div class="radio-row">
-              <label><input type="radio" name="libFocus" value="muscle" /> Muscle Mass</label>
-              <label><input type="radio" name="libFocus" value="aerobic" /> Aerobic/CV</label>
-              <label><input type="radio" name="libFocus" value="both" checked /> Both</label>
+        <!-- PROTOCOL FINDER -->
+        <div class="finder">
+          <details open>
+            <summary>Goals</summary>
+            <div class="checkbox-grid" id="goalFilters">
+              <label><input type="checkbox" value="muscle" /> Muscle mass / strength</label>
+              <label><input type="checkbox" value="weight" /> Weight loss / adiposity</label>
+              <label><input type="checkbox" value="vo2" /> VO₂max / aerobic fitness</label>
+              <label><input type="checkbox" value="glycemic" /> Glycemic control / TIR</label>
+              <label><input type="checkbox" value="bp" /> BP / cardiovascular risk</label>
+              <label><input type="checkbox" value="balance" /> Balance / fall risk</label>
+              <label><input type="checkbox" value="sleep" /> Sleep / HRV / recovery</label>
             </div>
-          </fieldset>
+          </details>
+
+          <details open>
+            <summary>Exercise Types</summary>
+            <div id="libTypeFilters" class="checkbox-grid" aria-label="Exercise types">
+              <!-- dynamically populated from CSV -->
+            </div>
+          </details>
+
+          <details>
+            <summary>Practical constraints</summary>
+            <div class="finder-row">
+              <div>
+                <label>Time available</label>
+                <div class="radio-row">
+                  <label><input type="radio" name="timeAvail" value="10" /> 10 min</label>
+                  <label><input type="radio" name="timeAvail" value="20" /> 20 min</label>
+                  <label><input type="radio" name="timeAvail" value="30" checked /> 30+ min</label>
+                </div>
+              </div>
+              <div>
+                <label>Equipment</label>
+                <div class="checkbox-grid" id="equipFilters">
+                  <label><input type="checkbox" value="none" /> None</label>
+                  <label><input type="checkbox" value="bands" /> Bands</label>
+                  <label><input type="checkbox" value="dumbbells" /> Dumbbells</label>
+                  <label><input type="checkbox" value="bike" /> Bike</label>
+                  <label><input type="checkbox" value="treadmill" /> Treadmill</label>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <details open>
+            <summary>Exercise Focus</summary>
+            <fieldset>
+              <div class="radio-row">
+                <label><input type="radio" name="libFocus" value="muscle" /> Muscle Mass</label>
+                <label><input type="radio" name="libFocus" value="aerobic" /> Aerobic/CV</label>
+                <label><input type="radio" name="libFocus" value="both" checked /> Both</label>
+              </div>
+            </fieldset>
+          </details>
+
+          <div class="actions">
+            <button id="applyFinder" class="primary">Apply Filters</button>
+            <button id="clearFinder">Clear Filters</button>
+          </div>
         </div>
 
         <div id="library-list" class="library-list"></div>
       </div>
     </section>
 
-    <!-- ===== PROGRESS ===== -->
+    <!-- ================= PROGRESS ================= -->
     <section id="progress" class="view" aria-labelledby="Progress">
       <div class="grid-2">
         <div class="card">
           <h2>Trends</h2>
-          <p class="help">Line chart shows HRV Δ%, Sleep %, and CGM TIR % over time from your saved entries.</p>
+          <p class="help">HRV Δ%, Sleep %, and CGM TIR % over time from your saved entries.</p>
           <div class="chart-wrap">
             <canvas id="trendChart" aria-label="Progress chart" role="img"></canvas>
           </div>
@@ -145,15 +196,25 @@
       </div>
     </section>
 
-    <!-- ===== DATA (hidden unless admin mode) ===== -->
+    <!-- ================= ASK ================= -->
+    <section id="ask" class="view" aria-labelledby="Ask">
+      <div class="card">
+        <h2>Ask the Coach (Deterministic + AI Addendum)</h2>
+        <p class="help">You’ll always get a rules-based answer first. If available, an AI addendum is appended.</p>
+        <div class="ask-row">
+          <input id="askInput" type="text" placeholder="e.g., Is HIIT OK if my SBP is 164?" />
+          <button id="askBtn" class="primary">Ask</button>
+        </div>
+        <div id="askAnswer" class="answer"></div>
+      </div>
+    </section>
+
+    <!-- ================= DATA (admin only; hidden) ================= -->
     <section id="data" class="view" aria-labelledby="Data" hidden>
       <div class="grid-2">
         <div class="card">
           <h2>Active Data Source</h2>
-          <p class="help">
-            The app reads <code>/data/master.csv</code> from the same site (CORS-safe on GitHub Pages & Netlify).
-            Use the preview below or test a local CSV (not saved) with the uploader.
-          </p>
+          <p class="help">Reading <code>/data/master.csv</code> (same origin). Preview or test a local CSV.</p>
           <div class="actions">
             <button id="reloadCsv">Reload /data/master.csv</button>
             <label class="upload">
@@ -167,20 +228,18 @@
         <div class="card">
           <h2>About</h2>
           <ul class="bullets">
-            <li>Rules: HRV Δ%, Sleep %, SBP/DBP, CGM TIR, hs-CRP with conservative gates.</li>
-            <li>Exercise Focus: Muscle, Aerobic/CV, or Both — affects plan and library filtering/scoring.</li>
-            <li>Coach text: shows <code>coach_script_non_api</code> and optional AI addendum.</li>
-            <li>Progress: stores daily snapshots in <code>localStorage</code> and plots key metrics.</li>
-            <li>Static site (PapaParse & Chart.js via CDN). AI addendum requires an <code>/api/coach</code> function.</li>
+            <li>Safety gates from HRV Δ%, Sleep %, SBP/DBP, TIR, hs-CRP.</li>
+            <li>Protocol Finder ranks CSV rows by goals, type, time, equipment, and gates.</li>
+            <li>Coaching shows deterministic baseline + optional AI addendum (via <code>/api/coach</code>).</li>
+            <li>Data tab visible only with <code>?admin=1</code> (or Shift+D); <code>?admin=0</code> hides it.</li>
           </ul>
-          <p class="small">Spec-conformant MVP for cognition-focused training with older-adult safety gates.</p>
         </div>
       </div>
     </section>
   </main>
 
   <footer class="app-footer">
-    <small>© BrainPreserve — Educational use only. Not a medical device.</small>
+    <small>© BrainPreserve — Educational use only.</small>
   </footer>
 
   <!-- CDNs -->
