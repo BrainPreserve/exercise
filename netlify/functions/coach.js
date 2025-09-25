@@ -1,69 +1,74 @@
-// netlify/functions/coach.js
-export default async (req, context) => {
+// Netlify Function: /api/coach  -> /.netlify/functions/coach
+// Uses OPENAI_API_KEY from Netlify environment. Never exposes keys to the browser.
+// Safety: AI addendum MUST NOT contradict deterministic gates received from the client.
+
+import fetch from 'node-fetch';
+
+export const handler = async (event) => {
   try {
-    if (req.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
-    const apiKey = Deno.env.get('OPENAI_API_KEY');
-    if (!apiKey) return new Response(JSON.stringify({ error:'Missing OPENAI_API_KEY' }), { status: 500 });
+    if (event.httpMethod !== 'POST') {
+      return { statusCode: 405, body: 'Method Not Allowed' };
+    }
+    const { question, latest, gates } = JSON.parse(event.body || '{}') || {};
 
-    const body = await req.json().catch(()=> ({}));
-    const { context:ctx = 'plan_protocol', question = '', title = '', types = [], muscle_mass = 0, notes = '', metrics = {}, gates = {} } = body;
-
-    // Safety summary
+    // Compose strict system prompt with safety gates (no contradiction allowed)
     const gateLines = [];
-    if (gates.bpHigh) gateLines.push('BP gate: SBP≥160 or DBP≥100 — avoid HIIT/plyometrics.');
-    if (gates.hrvLow) gateLines.push('HRV gate: ≤ −7% vs baseline — deload.');
-    if (gates.sleepLow) gateLines.push('Sleep gate: efficiency <85% — deload.');
-    if (gates.tirLow) gateLines.push('Glycemic gate: TIR <70% — prioritize resistance + Zone 2.');
-    if (gates.crpHigh) gateLines.push('Inflammation gate: hs-CRP >3 mg/L — lower-impact, isometrics.');
+    if (latest && gates) {
+      gateLines.push(
+        `Metrics: HRVΔ=${latest.hrvDeltaPct}% ; Sleep=${latest.sleepEff}% ; BP=${latest.sbp}/${latest.dbp} ; TIR=${latest.tir}% ; hs-CRP=${latest.crp} mg/L.`,
+        `Deterministic gates: ${gates.hiAllowed ? 'HI allowed with caution' : 'HI NOT allowed today'}; ` +
+        `Badges summary (human-readable): ${ (gates.badges||[]).map(b=>b.text).join(' | ') }`
+      );
+    } else {
+      gateLines.push('No saved metrics provided. Provide general, conservative advice.');
+    }
 
-    const sys = [
-      'You are a clinical exercise coach for older adults with a cognition-first, safety-first approach.',
-      'NEVER contradict or override safety gates. If advice might conflict, defer to gates.',
-      'Be concise, 3–6 short sentences. No fluff. No emojis.',
-      'Address: rationale (why), today’s tweak, simple monitoring/stop-rules, and one practical cue.',
+    const SYSTEM = [
+      'You are a cautious exercise coach for older adults focused on brain health.',
+      'You NEVER contradict the deterministic gates or red-flags above.',
+      'If gates indicate HOLD or CAUTION for high intensity, you must not recommend HIIT, sprints, max-effort lifts, or breathless efforts.',
+      'Prefer conservative, technique-first recommendations, warm-up and cool-down. Include monitoring suggestions when relevant.',
+      'Keep the addendum concise (5–8 sentences). No medical diagnosis.'
     ].join(' ');
 
-    const usr = [
-      `Context: ${ctx}`,
-      question ? `User question: ${question}` : '',
-      title ? `Protocol: ${title}` : '',
-      `Types: ${types.join(', ') || '—'}`,
-      `Muscle-focus: ${muscle_mass ? 'yes' : 'no'}`,
-      notes ? `Baseline coach script: ${notes}` : '',
-      `Metrics: HRVΔ%=${metrics.hrvDeltaPct ?? '—'}, Sleep%=${metrics.sleepEff ?? '—'}, BP=${metrics.sbp ?? '—'}/${metrics.dbp ?? '—'}, TIR%=${metrics.tir ?? '—'}, CRP=${metrics.crp ?? '—'}`,
-      gateLines.length ? `Safety gates active: ${gateLines.join(' ')} ` : 'Safety gates active: none.',
-      'Your output must comply with gates and be additive to the baseline script.'
-    ].filter(Boolean).join('\n');
+    const USER = [
+      gateLines.join('\n'),
+      '\nQuestion:', String(question||'').slice(0, 1000)
+    ].join('\n');
 
-    // OpenAI (Responses API style)
-    const res = await fetch('https://api.openai.com/v1/responses', {
-      method:'POST',
-      headers:{ 'Authorization':`Bearer ${apiKey}`, 'Content-Type':'application/json' },
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return { statusCode: 200, body: JSON.stringify({ addendum: '' }) };
+    }
+
+    // Completions (compatible with current OpenAI chat APIs)
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
-        input: [
-          { role:'system', content: sys },
-          { role:'user', content: usr }
-        ],
-        max_output_tokens: 220,
-        temperature: 0.3
+        temperature: 0.3,
+        max_tokens: 280,
+        messages: [
+          { role: 'system', content: SYSTEM },
+          { role: 'user', content: USER }
+        ]
       })
     });
 
-    if (!res.ok) {
-      const e = await res.text();
-      return new Response(JSON.stringify({ error:'upstream_error', detail:e }), { status: 502 });
-    }
-    const j = await res.json();
-    const addendum = (j.output?.[0]?.content?.[0]?.text || j.content?.[0]?.text || '').trim();
-
-    // Simple guard: if the model contradicts gates, drop it (basic heuristic)
-    if (gates.bpHigh && /hiit|plyo/i.test(addendum)) {
-      return Response.json({ addendum: '' });
+    if (!resp.ok) {
+      // Fail closed (no addendum) to preserve deterministic output.
+      return { statusCode: 200, body: JSON.stringify({ addendum: '' }) };
     }
 
-    return Response.json({ addendum });
+    const data = await resp.json();
+    const addendum = data?.choices?.[0]?.message?.content || '';
+    return { statusCode: 200, body: JSON.stringify({ addendum }) };
   } catch (e) {
-    return new Response(JSON.stringify({ error:'server_error', detail:String(e) }), { status: 500 });
+    // Never surface errors to the client; just omit the addendum.
+    return { statusCode: 200, body: JSON.stringify({ addendum: '' }) };
   }
 };
