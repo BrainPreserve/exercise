@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Brain Health Exercise — Daily Plan</title>
+  <link rel="stylesheet" href="assets/styles.css" />
+  <meta name="description" content="Evidence-based, cognition-focused exercise planning with safety gates and deterministic coaching." />
+</head>
+<body>
+  <header class="app-header">
+    <h1>Brain Health Exercise — Daily Plan</h1>
+    <p class="tagline">Evidence-based sessions that adapt to HRV, sleep, BP, glucose, and inflammation.</p>
+    <nav class="tabs" aria-label="Primary">
+      <button class="tab active" data-tab="plan">Plan</button>
+      <button class="tab" data-tab="library">Library</button>
+      <button class="tab" data-tab="progress">Progress</button>
+      <button class="tab" data-tab="ask">Ask</button>
+      <button class="tab" data-tab="data">Data</button>
+    </nav>
+  </header>
+
+  <!-- ===== PLAN ===== -->
+  <main>
+    <section id="plan" class="view active" aria-labelledby="Plan">
+      <div class="grid-2">
+        <div class="card">
+          <h2>Today’s Inputs</h2>
+          <p class="help">Enter today’s metrics. Your plan will adapt with conservative, cognition-safe gates.</p>
+          <form id="metrics-form" class="form-grid" autocomplete="off">
+            <div>
+              <label for="hrvBaseline">HRV 7-day baseline (ms)</label>
+              <input id="hrvBaseline" name="hrvBaseline" type="number" min="1" step="1" placeholder="e.g., 40" required />
+            </div>
+            <div>
+              <label for="hrvToday">HRV today (ms)</label>
+              <input id="hrvToday" name="hrvToday" type="number" min="1" step="1" placeholder="e.g., 36" required />
+            </div>
+            <div>
+              <label for="sleepEff">Sleep efficiency (%)</label>
+              <input id="sleepEff" name="sleepEff" type="number" min="0" max="100" step="0.1" placeholder="e.g., 86" required />
+            </div>
+            <div>
+              <label for="sbp">SBP (mmHg)</label>
+              <input id="sbp" name="sbp" type="number" min="60" max="260" step="1" placeholder="e.g., 128" required />
+            </div>
+            <div>
+              <label for="dbp">DBP (mmHg)</label>
+              <input id="dbp" name="dbp" type="number" min="30" max="160" step="1" placeholder="e.g., 78" required />
+            </div>
+            <div>
+              <label for="tir">CGM Time-in-Range 70–180 (%)</label>
+              <input id="tir" name="tir" type="number" min="0" max="100" step="0.1" placeholder="e.g., 72" required />
+            </div>
+            <div>
+              <label for="crp">hs-CRP (mg/L)</label>
+              <input id="crp" name="crp" type="number" min="0" step="0.1" placeholder="e.g., 2.1" required />
+            </div>
+            <div>
+              <label for="muscleFocus">Focus on Muscle Mass?</label>
+              <select id="muscleFocus" name="muscleFocus">
+                <option value="off">No</option>
+                <option value="on">Yes (filter protocols to muscle_mass=1)</option>
+              </select>
+            </div>
+            <div class="full">
+              <label for="notes">Optional notes</label>
+              <input id="notes" name="notes" type="text" maxlength="160" placeholder="e.g., Mild DOMS; afternoon workout" />
+            </div>
+            <div class="actions full">
+              <button type="button" id="saveMetrics">Save Today</button>
+              <button type="button" id="genPlan" class="primary">Generate Today’s Plan</button>
+            </div>
+          </form>
+          <p class="disclaimer small">
+            Safety: stop for chest pain, severe shortness of breath, dizziness, near-fall, or SBP ≥ 180 mmHg.
+            This is not a medical device nor emergency service.
+          </p>
+        </div>
+
+        <div class="card">
+          <h2>Today’s Plan</h2>
+          <div id="plan-summary" class="summary"></div>
+          <div id="plan-gates" class="badges"></div>
+          <div id="plan-recos" class="recommendations"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== LIBRARY ===== -->
+    <section id="library" class="view" aria-labelledby="Library">
+      <div class="card">
+        <h2>Protocol Library</h2>
+        <div class="toolbar">
+          <input id="libSearch" type="search" placeholder="Search protocols, modality, targets…" />
+          <label class="inline">
+            <input id="libMuscleOnly" type="checkbox" /> show muscle-mass protocols only
+          </label>
+        </div>
+        <div id="library-list" class="library-list"></div>
+      </div>
+    </section>
+
+    <!-- ===== PROGRESS ===== -->
+    <section id="progress" class="view" aria-labelledby="Progress">
+      <div class="grid-2">
+        <div class="card">
+          <h2>Trends</h2>
+          <p class="help">Line chart shows HRV Δ%, Sleep %, and CGM TIR % over time based on your saved entries.</p>
+          <canvas id="trendChart" width="900" height="450" aria-label="Progress chart" role="img"></canvas>
+          <div class="mini-grid">
+            <div><strong>Latest SBP/DBP:</strong> <span id="latest-bp">—</span></div>
+            <div><strong>Latest hs-CRP:</strong> <span id="latest-crp">—</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Saved Days</h2>
+          <div id="saved-table" class="table-wrap" role="table" aria-label="Saved daily entries"></div>
+          <div class="actions">
+            <button id="exportMetrics">Download Metrics CSV</button>
+            <button id="clearMetrics">Clear All Saved Metrics</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== ASK ===== -->
+    <section id="ask" class="view" aria-labelledby="Ask">
+      <div class="card">
+        <h2>Ask the Coach (Deterministic)</h2>
+        <p class="help">No AI required. Safety and adaptation answers mirror your rules and thresholds.</p>
+        <div class="ask-row">
+          <input id="askInput" type="text" placeholder="e.g., Is HIIT OK if my SBP is 164?" />
+          <button id="askBtn" class="primary">Ask</button>
+        </div>
+        <div id="askAnswer" class="answer"></div>
+      </div>
+    </section>
+
+    <!-- ===== DATA ===== -->
+    <section id="data" class="view" aria-labelledby="Data">
+      <div class="grid-2">
+        <div class="card">
+          <h2>Active Data Source</h2>
+          <p class="help">
+            By default the app reads <code>/data/master.csv</code> on the same site (CORS-safe on GitHub Pages & Netlify).
+            Use the quick preview below, or test a local CSV (not saved) with the uploader.
+          </p>
+          <div class="actions">
+            <button id="reloadCsv">Reload /data/master.csv</button>
+            <label class="upload">
+              <input id="fileCsv" type="file" accept=".csv,text/csv" />
+              <span>Test a local CSV file…</span>
+            </label>
+          </div>
+          <div id="csvPreview" class="table-wrap" role="table" aria-label="CSV preview table"></div>
+        </div>
+
+        <div class="card">
+          <h2>About</h2>
+          <ul class="bullets">
+            <li>Rules engine: HRV Δ%, Sleep %, SBP/DBP, CGM TIR, hs-CRP with conservative safety gates.</li>
+            <li>Muscle-mass filter: when enabled, library and plan limit to rows with <code>muscle_mass=1</code>.</li>
+            <li>Coach text: shows <code>coach_script_non_api</code> when present.</li>
+            <li>Progress: stores daily snapshots in <code>localStorage</code> and plots key metrics.</li>
+            <li>No build tools; pure static assets with PapaParse & Chart.js via CDN.</li>
+          </ul>
+          <p class="small">Spec-conformant MVP for cognition-focused training with older-adult safety gates.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <small>© BrainPreserve — Educational use only. Not a medical device.</small>
+  </footer>
+
+  <!-- CDNs -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- App -->
+  <script src="assets/app.js"></script>
+</body>
+</html>
