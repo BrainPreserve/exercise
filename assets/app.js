@@ -1,30 +1,420 @@
-/* BrainPreserve — Exercise Coach (CSV-strict, auto-AI) */
-const state = { csvRows: [], csvHeaders: [], metrics: JSON.parse(localStorage.getItem('bp_metrics')||'[]'), admin:false, libraryView:[] };
-const $ = s=>document.querySelector(s);
-function escapeHtml(s){return (s||'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',\"'\":'&#39;','\"':'&quot;'}[c]));}
-function saveMetrics(a){localStorage.setItem('bp_metrics',JSON.stringify(a||[]));}
-function neutralLatest(){return {dateISO:new Date().toISOString(),hrvDeltaPct:0,sleepEff:85,sbp:120,dbp:75,tir:70,crp:1.0,focus:'both',notes:''};}
-function loadCSV(url){return new Promise((resolve,reject)=>{Papa.parse(url,{download:true,header:true,dynamicTyping:false,skipEmptyLines:true,complete:res=>resolve(res),error:err=>reject(err)});});}
-const GATE={HRV_DROP_WARN:-8,SLEEP_LOW:80,SBP_HIGH:160,DBP_HIGH:100,TIR_LOW:60,CRP_HIGH:3.0};
-function classifyGates({hrvDelta,sleepEff,sbp,dbp,tir,crp}){const alerts=[]; if(hrvDelta<=GATE.HRV_DROP_WARN)alerts.push('HRV Δ low'); if(sleepEff<GATE.SLEEP_LOW)alerts.push('Sleep suboptimal'); if(sbp>=GATE.SBP_HIGH||dbp>=GATE.DBP_HIGH)alerts.push('BP high'); if(tir<GATE.TIR_LOW)alerts.push('Glucose variability'); if(crp>=GATE.CRP_HIGH)alerts.push('Inflammation high'); return {hiAllowed:alerts.length===0,alerts};}
-function normalizeRow(row){return{title:(row['Exercise Type']||'').trim(),key:(row['exercise_key']||'').trim(),modality:(row['modality']||'').trim(),protocol_start:(row['protocol_start']||'').trim(),progression_rule:(row['progression_rule']||'').trim(),contraindications:(row['contraindications_flags']||'').trim(),biomarker_hooks:(row['biomarker_hooks']||'').trim(),cognitive_targets:(row['cognitive_targets']||'').trim(),mechanism_tags:(row['mechanism_tags']||'').trim(),safety_notes:(row['safety_notes']||'').trim(),equipment:(row['home_equipment']||'').split(',').map(s=>s.trim()).filter(Boolean),coach_non_api:(row['coach_script_non_api']||'').trim(),coach_api_prompt:(row['coach_prompt_api']||'').trim(),goal_label:(row['goal_label']||'').trim(),goal_signals:{muscle_mass:(row['muscle_mass']||'').trim(),cv_fitness:(row['cv_fitness']||'').trim(),glycemic_control:(row['glycemic_control']||'').trim(),blood_pressure:(row['blood_pressure']||'').trim(),body_composition:(row['body_composition']||'').trim(),lipids:(row['lipids']||'').trim()},raw:row};}
-function wireTabs(){document.querySelectorAll('.tab').forEach(b=>{b.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active')); b.classList.add('active'); const t=b.dataset.tab; document.querySelectorAll('.view').forEach(v=>v.classList.remove('active')); $('#'+t).classList.add('active'); if(t==='progress')updateProgress();});}); $('#disableAdmin')?.addEventListener('click',e=>{e.preventDefault();const u=new URL(location.href);u.searchParams.set('admin','0');location.href=u.toString();});}
-function setAdminVisibility(a){document.querySelectorAll('.admin-only').forEach(el=>{el.hidden=!a;}); $('#data')?.toggleAttribute('hidden',!a);}
-function wirePlan(){$('#saveMetrics').addEventListener('click',()=>{const m=readForm(); if(!m)return; state.metrics.push(m); saveMetrics(state.metrics); updateProgress(); alert('Saved.');}); $('#genPlan').addEventListener('click',()=>{const latest=state.metrics[state.metrics.length-1]||readForm()||neutralLatest(); const g=classifyGates({hrvDelta:latest.hrvDeltaPct,sleepEff:latest.sleepEff,sbp:latest.sbp,dbp:latest.dbp,tir:latest.tir,crp:latest.crp}); renderPlan(latest,g);}); $('#clearForm').addEventListener('click',()=>$('#metrics-form').reset());}
-function readForm(){const hb=+$('#hrvBaseline').value, ht=+$('#hrvToday').value, se=+$('#sleepEff').value, sbp=+$('#sbp').value, dbp=+$('#dbp').value, tir=+$('#tir').value, crp=+$('#crp').value; if(![hb,ht,se,sbp,dbp,tir,crp].every(n=>Number.isFinite(n)))return null; const delta=hb>0?Math.round(((ht-hb)/hb)*100):0; const fEl=document.querySelector('input[name=\"planFocus\"]:checked'); const focus=fEl?fEl.value:'both'; return{dateISO:new Date().toISOString(),hrvDeltaPct:delta,sleepEff:se,sbp,dbp,tir,crp,focus,notes:($('#notes').value||'').trim()};}
-function renderPlan(latest,g){const hi=g.hiAllowed; $('#plan-summary').textContent=`Based on your latest metrics:\nHRV Δ ${latest.hrvDeltaPct}% ; Sleep ${latest.sleepEff}% ; SBP/DBP ${latest.sbp}/${latest.dbp} ; TIR ${latest.tir}% ; hs‑CRP ${latest.crp} mg/L.`; const bw=$('#plan-gates'); bw.innerHTML=''; (g.alerts||[]).forEach(a=>{const b=document.createElement('span'); b.className='badge bad'; b.textContent=a; bw.appendChild(b);}); if(g.alerts.length===0){const ok=document.createElement('span'); ok.className='badge ok'; ok.textContent='High‑intensity allowed'; bw.appendChild(ok);} else {const w=document.createElement('span'); w.className='badge warn'; w.textContent='Favor moderate/technique work'; bw.appendChild(w);} const preferred=state.csvRows.filter(r=>{if(latest.focus==='muscle')return (r.goal_signals.muscle_mass||'').length>0; if(latest.focus==='aerobic')return (r.goal_signals.cv_fitness||'').length>0; return true;}).slice(0,5); const target=$('#plan-recos'); target.innerHTML=''; preferred.forEach(r=>{const wrap=document.createElement('div'); wrap.className='rec-card'; wrap.innerHTML=`<div class=\"title\">${r.title}</div><div class=\"meta small\">${r.modality?`Type: ${r.modality} · `:''}${r.goal_label?`Targets: ${r.goal_label}`:''}</div>${r.protocol_start?`<div class=\"small\"><strong>Start:</strong> ${r.protocol_start}</div>`:''}${r.progression_rule?`<div class=\"small\"><strong>Progression:</strong> ${r.progression_rule}</div>`:''}${r.safety_notes?`<div class=\"small\"><strong>Safety:</strong> ${escapeHtml(r.safety_notes)}</div>`:''}${r.coach_non_api?`<div class=\"coach\"><h4>Coach (deterministic)</h4>${escapeHtml(r.coach_non_api)}</div>`:''}<div class=\"coach\" id=\"ai_${r.key}\"><h4>AI coaching</h4><div class=\"ai-body\">Loading…</div></div>`; target.appendChild(wrap); autoLoadAiAddendum(r.key,r.coach_api_prompt);});}
-function wireLibrary(){$('#applyFinder').addEventListener('click',applyFinder); $('#clearFinder').addEventListener('click',()=>{document.querySelectorAll('#libTypeFilters input[type=\"checkbox\"]').forEach(cb=>cb.checked=false); document.querySelectorAll('input[name=\"libFocus\"]').forEach(r=>{r.checked=r.value==='both';}); renderLibrary(state.csvRows);});}
-function buildTypeFilters(){const set=new Set(state.csvRows.map(r=>r.modality).filter(Boolean)); const c=$('#libTypeFilters'); c.innerHTML=''; Array.from(set).sort().forEach(mod=>{const id=`mod_${mod}`; const label=document.createElement('label'); label.innerHTML=`<input type=\"checkbox\" id=\"${id}\" value=\"${mod}\"> ${mod}`; c.appendChild(label);});}
-function buildEquipmentFilters(){const all=new Set(); state.csvRows.forEach(r=>r.equipment.forEach(e=>all.add(e))); const c=$('#equipFilters'); c.innerHTML=''; Array.from(all).sort().forEach(eq=>{const id=`eq_${eq.replace(/\\W+/g,'_')}`; const label=document.createElement('label'); label.innerHTML=`<input type=\"checkbox\" id=\"${id}\" value=\"${eq}\"> ${eq}`; c.appendChild(label);});}
-function applyFinder(){const types=Array.from(document.querySelectorAll('#libTypeFilters input:checked')).map(cb=>cb.value); const equip=Array.from(document.querySelectorAll('#equipFilters input:checked')).map(cb=>cb.value); const fEl=document.querySelector('input[name=\"libFocus\"]:checked'); const focus=fEl?fEl.value:'both'; let rows=state.csvRows.slice(); if(types.length)rows=rows.filter(r=>types.includes(r.modality)); if(equip.length)rows=rows.filter(r=>equip.every(eq=>r.equipment.includes(eq))); if(focus==='muscle')rows=rows.filter(r=>(r.goal_signals.muscle_mass||'').length>0); if(focus==='aerobic')rows=rows.filter(r=>(r.goal_signals.cv_fitness||'').length>0); renderLibrary(rows);}
-function renderLibrary(rows){state.libraryView=rows; const t=$('#library-list'); t.innerHTML=''; rows.forEach(r=>{const equipment=r.equipment.join(', '); const wrap=document.createElement('div'); wrap.className='rec-card'; wrap.innerHTML=`<div class=\"title\">${r.title}</div><div class=\"meta small\">${r.modality?`Type: ${r.modality} · `:''}${r.goal_label?`Targets: ${r.goal_label} · `:''}${equipment?`Equipment: ${equipment}`:''}</div>${r.protocol_start?`<div class=\"small\"><strong>Start:</strong> ${r.protocol_start}</div>`:''}${r.progression_rule?`<div class=\"small\"><strong>Progression:</strong> ${r.progression_rule}</div>`:''}${r.safety_notes?`<div class=\"small\"><strong>Safety:</strong> ${escapeHtml(r.safety_notes)}</div>`:''}${r.coach_non_api?`<div class=\"coach\"><h4>Coach (deterministic)</h4>${escapeHtml(r.coach_non_api)}</div>`:''}<div class=\"coach\" id=\"ai_${r.key}\"><h4>AI coaching</h4><div class=\"ai-body\">Loading…</div></div>`; t.appendChild(wrap); autoLoadAiAddendum(r.key,r.coach_api_prompt);});}
-async function autoLoadAiAddendum(key,prompt){const el=document.getElementById('ai_'+key); if(!el)return; try{const latest=state.metrics[state.metrics.length-1]||neutralLatest(); const g=classifyGates({hrvDelta:latest.hrvDeltaPct,sleepEff:latest.sleepEff,sbp:latest.sbp,dbp:latest.dbp,tir:latest.tir,crp:latest.crp}); const res=await fetch('/.netlify/functions/coach',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:prompt||'Provide concise coaching insights for this exercise.',latest,gates:g})}); if(res.ok){const j=await res.json(); el.querySelector('.ai-body').textContent=(j&&j.addendum)?j.addendum:'AI addendum unavailable.';} else {el.querySelector('.ai-body').textContent='AI addendum unavailable.';} }catch(_){el.querySelector('.ai-body').textContent='AI addendum unavailable.';}}
-function wireProgress(){$('#exportMetrics').addEventListener('click',exportMetrics); $('#clearMetrics').addEventListener('click',()=>{if(confirm('Clear all saved metrics?')){state.metrics=[]; saveMetrics(state.metrics); updateProgress();}});}
-function updateProgress(){const w=$('#saved-table'); w.innerHTML=''; const tbl=document.createElement('table'); tbl.innerHTML=`<thead><tr><th>Date</th><th>HRV Δ%</th><th>Sleep %</th><th>TIR %</th><th>SBP/DBP</th><th>hs‑CRP</th><th>Focus</th><th>Notes</th></tr></thead><tbody></tbody>`; (state.metrics||[]).forEach(r=>{const tr=document.createElement('tr'); const d=new Date(r.dateISO); tr.innerHTML=`<td>${d.toLocaleDateString()}</td><td>${r.hrvDeltaPct}</td><td>${r.sleepEff}</td><td>${r.tir}</td><td>${r.sbp}/${r.dbp}</td><td>${r.crp}</td><td>${r.focus}</td><td>${escapeHtml(r.notes)}</td>`; tbl.querySelector('tbody').appendChild(tr);}); w.appendChild(tbl); const ctx=document.getElementById('trendChart'); if(ctx&&window.Chart){const labels=state.metrics.map(r=>new Date(r.dateISO).toLocaleDateString()); const hrv=state.metrics.map(r=>r.hrvDeltaPct); const slp=state.metrics.map(r=>r.sleepEff); const tir=state.metrics.map(r=>r.tir); if(state._chart)state._chart.destroy(); state._chart=new Chart(ctx,{type:'line',data:{labels,datasets:[{label:'HRV Δ% (vs baseline)',data:hrv},{label:'Sleep %',data:slp},{label:'TIR %',data:tir}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false}}}); } const latest=state.metrics[state.metrics.length-1]; $('#latest-bp').textContent=latest?`${latest.sbp}/${latest.dbp}`:'—'; $('#latest-crp').textContent=latest?`${latest.crp}`:'—';}
-function exportMetrics(){const rows=state.metrics||[]; const headers=['dateISO','hrvDeltaPct','sleepEff','tir','sbp','dbp','crp','focus','notes']; const csv=[headers.join(',')].concat(rows.map(r=>headers.map(h=>String(r[h]??'').replace(/,/g,';')).join(','))).join('\n'); const blob=new Blob([csv],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='metrics.csv'; a.click();}
-function wireAsk(){$('#askBtn').addEventListener('click',onAsk);}
-async function onAsk(){const q=$('#askInput').value.trim(); if(!q)return; const latest=state.metrics[state.metrics.length-1]||neutralLatest(); const g=classifyGates({hrvDelta:latest.hrvDeltaPct,sleepEff:latest.sleepEff,sbp:latest.sbp,dbp:latest.dbp,tir:latest.tir,crp:latest.crp}); let answer=buildDeterministicAnswer(q,latest,g); try{const res=await fetch('/.netlify/functions/coach',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,latest,gates:g})}); if(res.ok){const j=await res.json(); if(j&&j.addendum)answer+=`\n\n———\nAI coaching:\n${j.addendum}`; else answer+=`\n\n———\nAI coaching: unavailable.`;} else {answer+=`\n\n———\nAI coaching: unavailable.`;} }catch(_){answer+=`\n\n———\nAI coaching: unavailable.`;} $('#askAnswer').textContent=answer;}
-function buildDeterministicAnswer(q,latest,g){const hi=g.hiAllowed; const lines=[]; lines.push(`Metrics: HRV Δ ${latest.hrvDeltaPct}% ; Sleep ${latest.sleepEff}% ; SBP/DBP ${latest.sbp}/${latest.dbp} ; TIR ${latest.tir}% ; hs‑CRP ${latest.crp} mg/L.`); lines.push(hi?'High‑intensity is allowed today if technique is safe.':'Favor moderate, technique‑focused work today; avoid max efforts.'); return lines.join('\n');}
-function refreshCsvPreview(rows,headers){const w=$('#csvPreview'); if(!w)return; w.innerHTML=''; const tbl=document.createElement('table'); const thead=document.createElement('thead'); const hr=document.createElement('tr'); (headers||[]).forEach(h=>{const th=document.createElement('th'); th.textContent=h; hr.appendChild(th);}); thead.appendChild(hr); tbl.appendChild(thead); const tb=document.createElement('tbody'); rows.slice(0,25).forEach(r=>{const tr=document.createElement('tr'); (headers||[]).forEach(h=>{const td=document.createElement('td'); td.textContent=r.raw[h]||''; tr.appendChild(td);}); tb.appendChild(tr);}); tbl.appendChild(tb); w.appendChild(tbl);}
-async function init(){const url=new URL(location.href); state.admin=url.searchParams.get('admin')==='1'; setAdminVisibility(state.admin); try{const parsed=await loadCSV('/data/master.csv'); state.csvHeaders=parsed.meta.fields||[]; state.csvRows=parsed.data.map(r=>normalizeRow(r)); buildTypeFilters(); buildEquipmentFilters(); renderLibrary(state.csvRows); if(state.admin)refreshCsvPreview(state.csvRows, state.csvHeaders);}catch(e){console.error('CSV load error:',e); alert('Could not load /data/master.csv. Ensure the file exists and is same-origin.');} wireTabs(); wirePlan(); wireLibrary(); wireProgress(); wireAsk(); updateProgress();}
-document.addEventListener('DOMContentLoaded',init);
+/* BrainPreserve — Exercise Coach
+ * CSV-first deterministic logic + automatic AI addendum
+ * No guessing: only uses detected CSV columns; sections hide if absent.
+ */
+
+/* ------- Utilities ------- */
+const $ = (sel, el = document) => el.querySelector(sel);
+const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
+const on = (el, ev, fn) => el.addEventListener(ev, fn);
+
+const splitMulti = (raw) => {
+  if (!raw || typeof raw !== 'string') return [];
+  // Prefer semicolons; fall back to commas
+  const hasSemi = raw.includes(';');
+  const parts = (hasSemi ? raw.split(';') : raw.split(','))
+    .map(s => s.trim())
+    .filter(Boolean);
+  return parts;
+};
+
+const col = (row, names) => {
+  for (const n of names) if (n in row && row[n] !== undefined) return row[n];
+  return undefined;
+};
+
+const detectColumnSet = (rows) => {
+  const cols = Object.keys(rows[0] || {});
+  const has = (name) => cols.includes(name);
+
+  const map = {
+    title: cols.find(c => /^(title|name|protocol)$/i.test(c)),
+    summary: cols.find(c => /^(summary|desc|description|details)$/i.test(c)),
+    goals: cols.find(c => /^(goals?|indications?)$/i.test(c)),
+    exercise_type: cols.find(c => /^(exercise_?type|type|modality)$/i.test(c)),
+    equipment: cols.find(c => /^(equipment|home_?equipment)$/i.test(c)),
+    time_min: cols.find(c => /^(time_minutes?|duration_minutes?)$/i.test(c)),
+    coach_non_api: cols.find(c => /^(coach_script_non_api|non_api_coach|coach_text)$/i.test(c)),
+    safety: cols.find(c => /^(safety|contraindications|notes)$/i.test(c)),
+    intensity: cols.find(c => /^(intensity|rpe|zone)$/i.test(c)),
+    tags: cols.find(c => /^(tags|labels)$/i.test(c)),
+  };
+  return map;
+};
+
+const htmlEscape = (s='') => s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+
+/* ------- App State ------- */
+const State = {
+  rows: [],
+  cols: {},
+  filters: { goals: new Set(), types: new Set(), equip: new Set(), time: null },
+  chart: null
+};
+
+/* ------- Tabs ------- */
+const wireTabs = () => {
+  $$('.tab').forEach(btn => {
+    on(btn, 'click', () => {
+      $$('.tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const tab = btn.dataset.tab;
+      $$('.view').forEach(v => v.classList.remove('active'));
+      $('#' + tab).classList.add('active');
+    });
+  });
+};
+
+/* ------- CSV Load ------- */
+const loadCSV = () => new Promise((resolve, reject) => {
+  Papa.parse('data/master.csv', {
+    header: true, skipEmptyLines: true, download: true,
+    complete: ({ data, errors, meta }) => {
+      if (errors && errors.length) console.warn('CSV parse warnings:', errors.slice(0,3));
+      // Clean empty rows
+      const rows = data.filter(r => Object.values(r).some(v => v && String(v).trim() !== ''));
+      State.rows = rows;
+      State.cols = detectColumnSet(rows);
+      const diag = {
+        detected_columns: State.cols,
+        sample_row: rows[0] || null,
+        total_rows: rows.length
+      };
+      $('#csvDiag').textContent = JSON.stringify(diag, null, 2);
+      resolve();
+    },
+    error: (err) => reject(err)
+  });
+});
+
+/* ------- Library: filters + render ------- */
+const uniqueFrom = (key) => {
+  const name = State.cols[key];
+  if (!name) return [];
+  const sets = new Set();
+  for (const r of State.rows) splitMulti(r[name]).forEach(v => sets.add(v));
+  return Array.from(sets).sort((a,b)=>a.localeCompare(b));
+};
+
+const renderChips = (container, items, group) => {
+  container.innerHTML = '';
+  items.forEach(v => {
+    const id = `chip-${group}-${v.replace(/\s+/g,'_')}`;
+    const div = document.createElement('label');
+    div.className = 'chip';
+    div.innerHTML = `<input type="checkbox" id="${id}" value="${htmlEscape(v)}"> ${htmlEscape(v)}`;
+    container.appendChild(div);
+    on(div.querySelector('input'), 'change', (e) => {
+      const set = State.filters[group];
+      if (e.target.checked) set.add(v); else set.delete(v);
+      renderLibrary();
+    });
+  });
+};
+
+const renderTimeRadios = () => {
+  const wrap = $('#timeRadios');
+  wrap.innerHTML = `
+    <label><input type="radio" name="timeOpt" value="10"> 10 min</label>
+    <label><input type="radio" name="timeOpt" value="20"> 20 min</label>
+    <label><input type="radio" name="timeOpt" value="30"> 30+ min</label>
+  `;
+  $$('input[name="timeOpt"]').forEach(r =>
+    on(r, 'change', () => { State.filters.time = Number(r.value); renderLibrary(); })
+  );
+
+  if (!State.cols.time_min) {
+    $('#timeNotice').textContent = 'No time column detected in CSV. Time filter disabled. Add a numeric "time_minutes" column to enable deterministic time filtering.';
+    wrap.closest('details').open = true;
+  } else {
+    $('#timeNotice').textContent = '';
+  }
+};
+
+const libraryFilter = (row) => {
+  const c = State.cols;
+  // Goals
+  if (State.filters.goals.size && c.goals) {
+    const g = new Set(splitMulti(row[c.goals]));
+    if (![...State.filters.goals].some(x => g.has(x))) return false;
+  }
+  // Types
+  if (State.filters.types.size && c.exercise_type) {
+    const t = new Set(splitMulti(row[c.exercise_type]));
+    if (![...State.filters.types].some(x => t.has(x))) return false;
+  }
+  // Equipment
+  if (State.filters.equip.size && c.equipment) {
+    const e = new Set(splitMulti(row[c.equipment]));
+    if (![...State.filters.equip].some(x => e.has(x))) return false;
+  }
+  // Time
+  if (State.filters.time && c.time_min) {
+    const tm = Number(row[c.time_min] || 0);
+    if (isFinite(tm)) {
+      if (State.filters.time === 10 && tm > 10) return false;
+      if (State.filters.time === 20 && (tm <= 10 || tm > 20)) return false;
+      // 30+ => pass
+    }
+  }
+  return true;
+};
+
+const buildPromptFromRow = (row) => {
+  const c = State.cols;
+  const title = col(row, [c.title]) || 'Unnamed protocol';
+  const summary = col(row, [c.summary]) || '';
+  const goals = c.goals ? splitMulti(row[c.goals]).join(', ') : '';
+  const type  = c.exercise_type ? splitMulti(row[c.exercise_type]).join(', ') : '';
+  const equip = c.equipment ? splitMulti(row[c.equipment]).join(', ') : '';
+  const safety = col(row, [c.safety]) || '';
+  const intensity = col(row, [c.intensity]) || '';
+  return `You are an exercise coach for older adults focused on cognitive health. Provide a brief, practical coaching paragraph (no bullets) that adds value beyond the deterministic CSV details.
+Protocol: ${title}
+Summary: ${summary}
+Goals: ${goals}
+Type: ${type}
+Equipment: ${equip}
+Intensity: ${intensity}
+Safety notes: ${safety}
+Tone: clinical, supportive, concise. Avoid repeating the deterministic fields verbatim.`;
+};
+
+const callCoachAPI = async (prompt) => {
+  try {
+    const res = await fetch('/api/coach', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ prompt })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return data.text || data.answer || data.output || '';
+  } catch (e) {
+    console.warn('AI addendum unavailable:', e.message);
+    return ''; // graceful fallback
+  }
+};
+
+const renderLibrary = async () => {
+  const list = $('#libraryList');
+  list.innerHTML = '';
+  const c = State.cols;
+  const rows = State.rows.filter(libraryFilter);
+
+  for (const r of rows) {
+    const title = col(r, [c.title]) || 'Unnamed protocol';
+    const summary = col(r, [c.summary]) || '';
+    const goals = c.goals ? splitMulti(r[c.goals]) : [];
+    const type  = c.exercise_type ? splitMulti(r[c.exercise_type]) : [];
+    const equip = c.equipment ? splitMulti(r[c.equipment]) : [];
+    const timeM = c.time_min ? Number(r[c.time_min] || 0) : null;
+    const nonAPI = col(r, [c.coach_non_api]) || '';
+
+    const card = document.createElement('article');
+    card.className = 'card';
+    card.innerHTML = `
+      <h3>${htmlEscape(title)}</h3>
+      <p class="prose">${htmlEscape(summary)}</p>
+      <div class="protocol-meta">
+        ${goals.map(g=>`<span class="badge">${htmlEscape(g)}</span>`).join('')}
+        ${type.map(t=>`<span class="badge">${htmlEscape(t)}</span>`).join('')}
+        ${timeM?`<span class="badge">${timeM} min</span>`:''}
+      </div>
+      ${equip.length?`<p class="help"><strong>Equipment:</strong> ${equip.map(htmlEscape).join(', ')}</p>`:''}
+      ${nonAPI?`<div class="prose"><strong>Coach Summary (deterministic):</strong> ${htmlEscape(nonAPI)}</div>`:''}
+      <div class="ai-block" data-ai="pending" hidden>
+        <h4>AI Coaching Insights</h4>
+        <div class="prose"></div>
+      </div>
+    `;
+    list.appendChild(card);
+
+    // Automatic AI addendum (no toggles)
+    const prompt = buildPromptFromRow(r);
+    const aiWrap = card.querySelector('.ai-block');
+    const aiBody = aiWrap.querySelector('.prose');
+    const text = await callCoachAPI(prompt);
+    if (text && text.trim()) {
+      aiBody.textContent = text.trim();
+      aiWrap.hidden = false;
+    }
+  }
+};
+
+/* ------- Plan tab ------- */
+const computePlanDeterministic = (m) => {
+  // Simple safety gates and steering, CSV-agnostic
+  const hrvDelta = ((m.hrvToday - m.hrvBaseline) / m.hrvBaseline) * 100;
+  const riskyBP = (m.sbp >= 160) || (m.dbp >= 100);
+  const poorSleep = m.sleepEff < 80;
+  const lowTIR = m.tir < 70;
+  const highCRP = m.crp >= 3;
+
+  let focus = m.focus; // 'muscle'|'aerobic'|'both'
+  if (riskyBP || highCRP) focus = 'aerobic';
+  if (poorSleep) focus = (focus === 'muscle' ? 'both' : focus);
+
+  const msg = [
+    `HRV Δ: ${hrvDelta.toFixed(1)}%`,
+    `Sleep eff: ${m.sleepEff}%`,
+    `BP: ${m.sbp}/${m.dbp} mmHg`,
+    `TIR: ${m.tir}%`,
+    `hs-CRP: ${m.crp} mg/L`,
+    riskyBP ? '— Caution: elevated BP, emphasize lower-intensity aerobic and technique.' : '',
+    highCRP ? '— Inflammation elevated; keep intensity moderate, extend warm-up.' : '',
+    lowTIR ? '— Metabolic signal is off; avoid high-glycolytic repeats today.' : ''
+  ].filter(Boolean).join('<br>');
+
+  const steer = {
+    muscle: 'Technique-first resistance (2–3 sets, RPE 6–7), finish with mobility.',
+    aerobic: 'Zone 2–3 continuous or intervals (20–30 min), nose-breathing pacing.',
+    both: '15–20 min Z2, then 2 compound sets (RPE 6–7), finish with balance.'
+  }[focus];
+
+  return {
+    html: `<p>${msg}</p><p><strong>Plan focus:</strong> ${focus}. ${steer}</p>`,
+    prompt: `Create a one-paragraph, safe plan for an older adult focused on brain health.
+HRV baseline ${m.hrvBaseline} ms, today ${m.hrvToday} ms; Sleep ${m.sleepEff}%; BP ${m.sbp}/${m.dbp}; TIR ${m.tir}%; hs-CRP ${m.crp} mg/L.
+Desired focus: ${m.focus}. Apply safety gating as appropriate.`
+  };
+};
+
+const wirePlan = () => {
+  const f = $('#metricsForm');
+  on(f, 'submit', async (e) => {
+    e.preventDefault();
+    const m = {
+      hrvBaseline: Number($('#hrvBaseline').value),
+      hrvToday: Number($('#hrvToday').value),
+      sleepEff: Number($('#sleepEff').value),
+      sbp: Number($('#sbp').value),
+      dbp: Number($('#dbp').value),
+      tir: Number($('#tir').value),
+      crp: Number($('#crp').value),
+      focus: ($$('input[name="focus"]:checked')[0]||{}).value || 'muscle'
+    };
+    const det = computePlanDeterministic(m);
+    $('#planDeterministic').innerHTML = det.html;
+
+    const aiText = await callCoachAPI(det.prompt);
+    if (aiText && aiText.trim()) {
+      $('#planAIText').textContent = aiText.trim();
+      $('#planAI').hidden = false;
+    } else {
+      $('#planAI').hidden = true;
+    }
+  });
+
+  on($('#clearMetrics'), 'click', () => {
+    f.reset();
+    $('#planDeterministic').innerHTML = '';
+    $('#planAI').hidden = true;
+  });
+
+  on($('#saveMetrics'), 'click', () => {
+    const day = {
+      date: new Date().toISOString().slice(0,10),
+      hrvBaseline: Number($('#hrvBaseline').value),
+      hrvToday: Number($('#hrvToday').value),
+      sleepEff: Number($('#sleepEff').value),
+      sbp: Number($('#sbp').value),
+      dbp: Number($('#dbp').value),
+      tir: Number($('#tir').value),
+      crp: Number($('#crp').value)
+    };
+    const arr = JSON.parse(localStorage.getItem('bp_days') || '[]');
+    arr.push(day);
+    localStorage.setItem('bp_days', JSON.stringify(arr));
+    renderDays();
+    renderChart();
+  });
+};
+
+/* ------- Progress ------- */
+const renderDays = () => {
+  const arr = JSON.parse(localStorage.getItem('bp_days') || '[]');
+  const tbl = $('#daysTable');
+  tbl.innerHTML = '<tr><th>Date</th><th>HRV base</th><th>HRV today</th><th>Δ%</th><th>Sleep%</th><th>BP</th><th>TIR%</th><th>CRP</th></tr>';
+  for (const d of arr) {
+    const delta = ((d.hrvToday - d.hrvBaseline) / d.hrvBaseline) * 100;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${d.date}</td><td>${d.hrvBaseline}</td><td>${d.hrvToday}</td><td>${delta.toFixed(1)}</td><td>${d.sleepEff}</td><td>${d.sbp}/${d.dbp}</td><td>${d.tir}</td><td>${d.crp}</td>`;
+    tbl.appendChild(tr);
+  }
+};
+
+const renderChart = () => {
+  const arr = JSON.parse(localStorage.getItem('bp_days') || '[]');
+  const labels = arr.map(d => d.date);
+  const data = arr.map(d => ((d.hrvToday - d.hrvBaseline) / d.hrvBaseline) * 100);
+  const ctx = $('#progressChart');
+  if (State.chart) State.chart.destroy();
+  State.chart = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [{ label: 'HRV Δ% (today vs baseline)', data }] },
+    options: { responsive: true, maintainAspectRatio: false }
+  });
+};
+
+/* ------- Ask ------- */
+const deterministicAnswer = (q) => {
+  const text = q.toLowerCase();
+  // Very lightweight CSV-based matcher
+  const c = State.cols;
+  const picks = [];
+  for (const r of State.rows) {
+    const fields = [
+      col(r, [c.title]), col(r, [c.summary]),
+      ...(c.goals? splitMulti(r[c.goals]):[]),
+      ...(c.exercise_type? splitMulti(r[c.exercise_type]):[]),
+      ...(c.tags? splitMulti(r[c.tags]):[])
+    ].filter(Boolean).join(' ').toLowerCase();
+    if (fields.includes(text)) picks.push(r);
+    if (picks.length >= 5) break;
+  }
+  if (!picks.length) return 'No direct deterministic match in the CSV for that query. Try a more specific goal or modality text that exists in your data.';
+  return 'Potential protocols: ' + picks.map(r => col(r,[State.cols.title]) || 'Unnamed').join(' · ');
+};
+
+const wireAsk = () => {
+  on($('#askBtn'), 'click', async () => {
+    const q = ($('#askInput').value || '').trim();
+    if (!q) return;
+    // Deterministic from CSV
+    const det = deterministicAnswer(q);
+    $('#askOutDet').innerHTML = `<p>${htmlEscape(det)}</p>`;
+    // AI addendum (no dependency on Plan)
+    const ai = await callCoachAPI(`Question: ${q}\nUse the dataset context only for inspiration; add a concise coaching paragraph for an older adult focused on brain health. Avoid repeating any deterministic list I provided.`);
+    if (ai && ai.trim()) {
+      $('#askOutAIText').textContent = ai.trim();
+      $('#askOutAI').hidden = false;
+    } else {
+      $('#askOutAI').hidden = true;
+    }
+  });
+};
+
+/* ------- Boot ------- */
+(async function boot(){
+  try {
+    wireTabs();
+    await loadCSV();
+
+    // Filters
+    if (State.cols.goals) renderChips($('#goalChips'), uniqueFrom('goals'), 'goals');
+    if (State.cols.exercise_type) renderChips($('#typeChips'), uniqueFrom('exercise_type'), 'types');
+    if (State.cols.equipment) renderChips($('#equipChips'), uniqueFrom('equipment'), 'equip');
+    renderTimeRadios();
+
+    await renderLibrary();
+    wirePlan();
+    renderDays();
+    renderChart();
+    wireAsk();
+  } catch (e) {
+    console.error('Boot failure:', e);
+    // Keep tabs usable even if something failed
+    wireTabs();
+  }
+})();
