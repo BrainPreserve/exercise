@@ -15,18 +15,20 @@
       <button class="tab active" data-tab="plan">Plan</button>
       <button class="tab" data-tab="library">Library</button>
       <button class="tab" data-tab="progress">Progress</button>
-      <button class="tab" data-tab="ask">Ask</button>
-      <button class="tab" data-tab="data">Data</button>
+      <!-- Data tab appears only in Admin mode -->
+      <button class="tab admin-only" data-tab="data" hidden>Data</button>
+      <a id="disableAdmin" class="admin-only small-link" hidden href="#" title="Disable Admin">Disable Admin</a>
     </nav>
   </header>
 
-  <!-- ===== PLAN ===== -->
   <main>
+    <!-- ===== PLAN ===== -->
     <section id="plan" class="view active" aria-labelledby="Plan">
       <div class="grid-2">
         <div class="card">
           <h2>Today’s Inputs</h2>
           <p class="help">Enter today’s metrics. Your plan will adapt with conservative, cognition-safe gates.</p>
+
           <form id="metrics-form" class="form-grid" autocomplete="off">
             <div>
               <label for="hrvBaseline">HRV 7-day baseline (ms)</label>
@@ -56,13 +58,17 @@
               <label for="crp">hs-CRP (mg/L)</label>
               <input id="crp" name="crp" type="number" min="0" step="0.1" placeholder="e.g., 2.1" required />
             </div>
-            <div>
-              <label for="muscleFocus">Focus on Muscle Mass?</label>
-              <select id="muscleFocus" name="muscleFocus">
-                <option value="off">No</option>
-                <option value="on">Yes (filter protocols to muscle_mass=1)</option>
-              </select>
-            </div>
+
+            <!-- Exercise Focus (Plan) -->
+            <fieldset class="full">
+              <legend>Exercise Focus</legend>
+              <div class="radio-row">
+                <label><input type="radio" name="planFocus" value="muscle" /> Muscle Mass</label>
+                <label><input type="radio" name="planFocus" value="aerobic" /> Aerobic/CV</label>
+                <label><input type="radio" name="planFocus" value="both" checked /> Both</label>
+              </div>
+            </fieldset>
+
             <div class="full">
               <label for="notes">Optional notes</label>
               <input id="notes" name="notes" type="text" maxlength="160" placeholder="e.g., Mild DOMS; afternoon workout" />
@@ -70,8 +76,10 @@
             <div class="actions full">
               <button type="button" id="saveMetrics">Save Today</button>
               <button type="button" id="genPlan" class="primary">Generate Today’s Plan</button>
+              <button type="button" id="clearForm">Clear Form</button>
             </div>
           </form>
+
           <p class="disclaimer small">
             Safety: stop for chest pain, severe shortness of breath, dizziness, near-fall, or SBP ≥ 180 mmHg.
             This is not a medical device nor emergency service.
@@ -91,12 +99,23 @@
     <section id="library" class="view" aria-labelledby="Library">
       <div class="card">
         <h2>Protocol Library</h2>
-        <div class="toolbar">
-          <input id="libSearch" type="search" placeholder="Search protocols, modality, targets…" />
-          <label class="inline">
-            <input id="libMuscleOnly" type="checkbox" /> show muscle-mass protocols only
-          </label>
+        <p class="help">Select one or more exercise types. If none are selected, all protocols are shown.</p>
+
+        <div class="toolbar vertical">
+          <!-- Dynamic multi-select checkboxes filled from CSV exercise types -->
+          <div id="libTypeFilters" class="checkbox-grid" aria-label="Exercise types"></div>
+
+          <!-- Library Exercise Focus radios -->
+          <fieldset class="mt8">
+            <legend>Exercise Focus</legend>
+            <div class="radio-row">
+              <label><input type="radio" name="libFocus" value="muscle" /> Muscle Mass</label>
+              <label><input type="radio" name="libFocus" value="aerobic" /> Aerobic/CV</label>
+              <label><input type="radio" name="libFocus" value="both" checked /> Both</label>
+            </div>
+          </fieldset>
         </div>
+
         <div id="library-list" class="library-list"></div>
       </div>
     </section>
@@ -106,8 +125,10 @@
       <div class="grid-2">
         <div class="card">
           <h2>Trends</h2>
-          <p class="help">Line chart shows HRV Δ%, Sleep %, and CGM TIR % over time based on your saved entries.</p>
-          <canvas id="trendChart" width="900" height="450" aria-label="Progress chart" role="img"></canvas>
+          <p class="help">Line chart shows HRV Δ%, Sleep %, and CGM TIR % over time from your saved entries.</p>
+          <div class="chart-wrap">
+            <canvas id="trendChart" aria-label="Progress chart" role="img"></canvas>
+          </div>
           <div class="mini-grid">
             <div><strong>Latest SBP/DBP:</strong> <span id="latest-bp">—</span></div>
             <div><strong>Latest hs-CRP:</strong> <span id="latest-crp">—</span></div>
@@ -124,27 +145,14 @@
       </div>
     </section>
 
-    <!-- ===== ASK ===== -->
-    <section id="ask" class="view" aria-labelledby="Ask">
-      <div class="card">
-        <h2>Ask the Coach (Deterministic)</h2>
-        <p class="help">No AI required. Safety and adaptation answers mirror your rules and thresholds.</p>
-        <div class="ask-row">
-          <input id="askInput" type="text" placeholder="e.g., Is HIIT OK if my SBP is 164?" />
-          <button id="askBtn" class="primary">Ask</button>
-        </div>
-        <div id="askAnswer" class="answer"></div>
-      </div>
-    </section>
-
-    <!-- ===== DATA ===== -->
-    <section id="data" class="view" aria-labelledby="Data">
+    <!-- ===== DATA (hidden unless admin mode) ===== -->
+    <section id="data" class="view" aria-labelledby="Data" hidden>
       <div class="grid-2">
         <div class="card">
           <h2>Active Data Source</h2>
           <p class="help">
-            By default the app reads <code>/data/master.csv</code> on the same site (CORS-safe on GitHub Pages & Netlify).
-            Use the quick preview below, or test a local CSV (not saved) with the uploader.
+            The app reads <code>/data/master.csv</code> from the same site (CORS-safe on GitHub Pages & Netlify).
+            Use the preview below or test a local CSV (not saved) with the uploader.
           </p>
           <div class="actions">
             <button id="reloadCsv">Reload /data/master.csv</button>
@@ -159,11 +167,11 @@
         <div class="card">
           <h2>About</h2>
           <ul class="bullets">
-            <li>Rules engine: HRV Δ%, Sleep %, SBP/DBP, CGM TIR, hs-CRP with conservative safety gates.</li>
-            <li>Muscle-mass filter: when enabled, library and plan limit to rows with <code>muscle_mass=1</code>.</li>
-            <li>Coach text: shows <code>coach_script_non_api</code> when present.</li>
+            <li>Rules: HRV Δ%, Sleep %, SBP/DBP, CGM TIR, hs-CRP with conservative gates.</li>
+            <li>Exercise Focus: Muscle, Aerobic/CV, or Both — affects plan and library filtering/scoring.</li>
+            <li>Coach text: shows <code>coach_script_non_api</code> and optional AI addendum.</li>
             <li>Progress: stores daily snapshots in <code>localStorage</code> and plots key metrics.</li>
-            <li>No build tools; pure static assets with PapaParse & Chart.js via CDN.</li>
+            <li>Static site (PapaParse & Chart.js via CDN). AI addendum requires an <code>/api/coach</code> function.</li>
           </ul>
           <p class="small">Spec-conformant MVP for cognition-focused training with older-adult safety gates.</p>
         </div>
