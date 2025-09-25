@@ -136,15 +136,12 @@
                   <label><input type="radio" name="timeAvail" value="20" /> 20 min</label>
                   <label><input type="radio" name="timeAvail" value="30" checked /> 30+ min</label>
                 </div>
+                <p class="small" id="timeNote"></p>
               </div>
               <div>
                 <label>Equipment</label>
                 <div class="checkbox-grid" id="equipFilters">
-                  <label><input type="checkbox" value="none" /> None</label>
-                  <label><input type="checkbox" value="bands" /> Bands</label>
-                  <label><input type="checkbox" value="dumbbells" /> Dumbbells</label>
-                  <label><input type="checkbox" value="bike" /> Bike</label>
-                  <label><input type="checkbox" value="treadmill" /> Treadmill</label>
+                  <!-- Populated from CSV home_equipment unique tokens -->
                 </div>
               </div>
             </div>
@@ -229,7 +226,7 @@
           <h2>About</h2>
           <ul class="bullets">
             <li>Safety gates from HRV Δ%, Sleep %, SBP/DBP, TIR, hs-CRP.</li>
-            <li>Protocol Finder ranks CSV rows by goals, type, time, equipment, and gates.</li>
+            <li>Protocol Finder ranks CSV rows by goals, type, equipment, and gates.</li>
             <li>Coaching shows deterministic baseline + optional AI addendum (via <code>/api/coach</code>).</li>
             <li>Data tab visible only with <code>?admin=1</code> (or Shift+D); <code>?admin=0</code> hides it.</li>
           </ul>
