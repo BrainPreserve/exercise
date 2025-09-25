@@ -2,17 +2,15 @@
   publish = "."
   functions = "netlify/functions"
 
-# Route /api/coach to the Netlify Function
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains; preload"
+    Content-Security-Policy = "default-src 'self'; connect-src 'self' https://api.openai.com; img-src 'self' data: blob:; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-ancestors 'none'"
+    X-Frame-Options = "DENY"
+    Permissions-Policy = "geolocation=(), microphone=(), camera=()"
+
 [[redirects]]
   from = "/api/coach"
   to = "/.netlify/functions/coach"
   status = 200
-
-# Optional security headers (safe defaults)
-[[headers]]
-  for = "/*"
-  [headers.values]
-    Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"
-    X-Frame-Options = "SAMEORIGIN"
-    X-Content-Type-Options = "nosniff"
-    Referrer-Policy = "same-origin"
