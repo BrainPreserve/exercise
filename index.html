@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>BrainPreserve — Exercise Coach</title>
-  <meta name="description" content="Evidence-based, cognition-forward exercise planning using strict CSV logic plus integrated AI coaching." />
+  <meta name="description" content="CSV-driven exercise coaching for cognitive health with integrated AI addenda." />
   <link rel="stylesheet" href="assets/styles.css" />
-  <!-- Chart.js + PapaParse (CDN, no build tools) -->
+  <!-- CDNs (no build tools) -->
   <script defer src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script defer src="assets/app.js"></script>
@@ -14,13 +14,11 @@
 <body>
   <header class="app-header">
     <h1>BrainPreserve — Exercise Coach</h1>
-    <p class="tagline">Deterministic plans from your CSV + integrated AI coaching.</p>
     <nav class="tabs" aria-label="Primary">
       <button class="tab active" data-tab="plan">Plan</button>
       <button class="tab" data-tab="library">Library</button>
       <button class="tab" data-tab="progress">Progress</button>
-      <button class="tab" data-tab="ask">Ask</button>
-      <button class="tab" data-tab="data">Data</button>
+      <button class="tab admin-only" data-tab="data" hidden>Data</button>
     </nav>
   </header>
 
@@ -72,6 +70,7 @@
               <button id="clearMetrics" type="button" class="btn">Clear Form</button>
               <button id="saveMetrics" type="button" class="btn">Save Today</button>
             </div>
+            <p id="saveMsg" class="save-msg" hidden>Saved. Check the <strong>Progress</strong> tab.</p>
           </form>
         </div>
 
@@ -87,41 +86,46 @@
 
       <div class="card">
         <h2>Progress (HRV Δ% over time)</h2>
-        <canvas id="progressChart" height="90"></canvas>
+        <canvas id="progressChart" height="110"></canvas>
       </div>
     </section>
 
     <!-- LIBRARY -->
     <section id="library" class="view">
       <div class="filters card">
-        <details open>
-          <summary>Goals</summary>
-          <div id="goalChips" class="chips"></div>
-        </details>
-        <details open>
-          <summary>Exercise Types</summary>
-          <div id="typeChips" class="chips"></div>
-        </details>
-        <details>
-          <summary>Practical constraints</summary>
-          <div class="constraints">
-            <div>
-              <strong>Time available</strong>
-              <div class="radio-row" id="timeRadios"></div>
-              <p id="timeNotice" class="notice"></p>
+        <div class="filters-row">
+          <details open>
+            <summary>Goals</summary>
+            <div id="goalChips" class="chips"></div>
+          </details>
+          <details open>
+            <summary>Exercise Types</summary>
+            <div id="typeChips" class="chips"></div>
+          </details>
+          <details>
+            <summary>Practical constraints</summary>
+            <div class="constraints">
+              <div>
+                <strong>Time available</strong>
+                <div class="radio-row" id="timeRadios"></div>
+                <p id="timeNotice" class="notice"></p>
+              </div>
+              <div>
+                <strong>Equipment</strong>
+                <div id="equipChips" class="chips"></div>
+              </div>
             </div>
-            <div>
-              <strong>Equipment</strong>
-              <div id="equipChips" class="chips"></div>
-            </div>
-          </div>
-        </details>
+          </details>
+        </div>
+        <div class="filters-actions">
+          <button id="clearLibrary" class="btn">Clear Fields</button>
+        </div>
       </div>
 
       <div id="libraryList" class="cards"></div>
     </section>
 
-    <!-- PROGRESS (table) -->
+    <!-- PROGRESS -->
     <section id="progress" class="view">
       <div class="card">
         <h2>Saved Metric Days</h2>
@@ -129,34 +133,26 @@
       </div>
     </section>
 
-    <!-- ASK -->
-    <section id="ask" class="view">
-      <div class="card">
-        <h2>Ask the Coach</h2>
-        <p class="help">This works without Plan data. Your answer includes deterministic suggestions from the CSV + an AI addendum.</p>
-        <div class="ask-row">
-          <input id="askInput" type="text" placeholder="e.g., Short, joint-friendly session for cognition and balance" />
-          <button id="askBtn" class="btn primary">Ask</button>
-        </div>
-        <div id="askOutDet" class="prose"></div>
-        <div id="askOutAI" class="ai-block" hidden>
-          <h3>AI Coaching Insights</h3>
-          <div id="askOutAIText" class="prose"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- DATA -->
-    <section id="data" class="view">
+    <!-- DATA (hidden unless ?admin=1 or #admin) -->
+    <section id="data" class="view" hidden>
       <div class="card">
         <h2>CSV Diagnostics</h2>
-        <pre id="csvDiag" class="diag"></pre>
+        <div class="diag-wrap">
+          <div>
+            <h3>Detected Columns</h3>
+            <pre id="csvDiag" class="diag"></pre>
+          </div>
+          <div class="csv-preview">
+            <h3>CSV Preview (first 50 rows)</h3>
+            <table id="csvTable" class="table"></table>
+          </div>
+        </div>
       </div>
     </section>
   </main>
 
   <footer class="app-footer">
-    <small>© BrainPreserve. CSV-first logic; AI addenda are clearly labeled.</small>
+    <small>© BrainPreserve.</small>
   </footer>
 </body>
 </html>
