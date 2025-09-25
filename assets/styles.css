@@ -1,44 +1,109 @@
 :root{
   --bg:#0f1115; --card:#151821; --text:#e9eef5; --muted:#aab4c3;
-  --chip:#1d2230; --chip-border:#2a3142; --primary:#4da3ff; --accent:#8be38b;
-  --danger:#ff6b6b; --ai:#2a3648;
-  --shadow:0 6px 18px rgba(0,0,0,.35);
+  --chip:#1c2130; --chip-border:#2a3142; --primary:#4da3ff; --accent:#8be38b;
+  --ai:#222d40; --ok:#46c07a;
+  --shadow:0 8px 20px rgba(0,0,0,.35);
   --radius:16px;
-  font-synthesis-weight:none;
 }
+
+/* Base --------------------------------------------------------------------- */
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+html,body{
+  margin:0; padding:0; background:var(--bg); color:var(--text);
+  font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial;
+  -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+}
 h1,h2,h3{margin:0 0 .6rem}
-p{margin:.3rem 0}
-.app-header{padding:24px 20px;border-bottom:1px solid #1f2432;background:linear-gradient(180deg,#10131a,#0f1115)}
-.tagline{color:var(--muted);margin-top:.4rem}
-.tabs{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}
-.tab{background:var(--chip);border:1px solid var(--chip-border);color:var(--text);padding:8px 12px;border-radius:999px;cursor:pointer}
-.tab.active{background:var(--primary);color:#061017;border-color:transparent}
-.view{display:none;padding:20px}
+p{margin:.35rem 0}
+
+/* Header & Tabs ------------------------------------------------------------ */
+.app-header{
+  padding:18px 16px; border-bottom:1px solid #1f2432;
+  background:linear-gradient(180deg,#111520,#0f1115);
+}
+.tabs{margin-top:10px; display:flex; gap:8px; flex-wrap:wrap}
+.tab{
+  background:var(--chip); border:1px solid var(--chip-border); color:var(--text);
+  padding:8px 12px; border-radius:999px; cursor:pointer; transition:all .15s ease;
+}
+.tab:hover{border-color:#3a4359}
+.tab.active{background:var(--primary); color:#08121e; border-color:transparent}
+
+.view{display:none; padding:18px}
 .view.active{display:block}
-.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+
+.grid-2{display:grid; grid-template-columns:1fr 1fr; gap:16px}
 @media (max-width:980px){.grid-2{grid-template-columns:1fr}}
-.card{background:var(--card);border:1px solid #1f2432;border-radius:var(--radius);padding:18px;box-shadow:var(--shadow)}
-.chips{display:flex;flex-wrap:wrap;gap:8px}
-.chip{display:inline-flex;gap:8px;align-items:center;padding:8px 12px;border-radius:999px;background:var(--chip);border:1px solid var(--chip-border);white-space:nowrap}
-.chip input{margin:0}
-.button-row,.radio-row,.ask-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-.btn{background:#20283a;border:1px solid #2a3246;color:var(--text);padding:8px 12px;border-radius:10px;cursor:pointer}
-.btn.primary{background:var(--primary);color:#07101a;border:none}
-.help,.notice{color:var(--muted);font-size:.92rem}
-.form-grid{display:grid;grid-template-columns:repeat(3,minmax(160px,1fr));gap:12px}
-@media (max-width:900px){.form-grid{grid-template-columns:repeat(2,minmax(160px,1fr))}}
-@media (max-width:640px){.form-grid{grid-template-columns:1fr}}
-.prose p{margin:.4rem 0}
-.ai-block{margin-top:12px;padding:12px;border-radius:12px;background:var(--ai);border:1px solid #334059}
-.cards{display:grid;grid-template-columns:repeat(3,minmax(260px,1fr));gap:14px}
+
+/* Cards & Layout ----------------------------------------------------------- */
+.card{
+  background:var(--card); border:1px solid #1f2432; border-radius:var(--radius);
+  padding:16px; box-shadow:var(--shadow);
+}
+.cards{display:grid; grid-template-columns:repeat(3,minmax(260px,1fr)); gap:14px}
 @media (max-width:1200px){.cards{grid-template-columns:repeat(2,minmax(260px,1fr))}}
 @media (max-width:780px){.cards{grid-template-columns:1fr}}
-.card h3{margin-top:.2rem}
-.protocol-meta{display:flex;gap:8px;flex-wrap:wrap;margin:.4rem 0 .2rem}
-.badge{padding:4px 8px;border-radius:999px;background:#22304a;border:1px solid #2b3a58;color:#cfe0ff;font-size:.85rem}
-.table{width:100%;border-collapse:collapse}
-.table th,.table td{border-bottom:1px solid #23293a;padding:8px 10px;text-align:left}
-.diag{white-space:pre-wrap;background:#0b0e14;border:1px solid #1c2332;padding:12px;border-radius:12px;max-height:360px;overflow:auto}
-details>summary{cursor:pointer;margin-bottom:8px;font-weight:600}
+
+.prose p{margin:.4rem 0}
+
+.ai-block{
+  margin-top:10px; padding:12px; border-radius:12px;
+  background:var(--ai); border:1px solid #334059;
+}
+
+/* Forms -------------------------------------------------------------------- */
+.form-grid{display:grid; grid-template-columns:repeat(3,minmax(180px,1fr)); gap:12px}
+@media (max-width:900px){.form-grid{grid-template-columns:repeat(2,minmax(180px,1fr))}}
+@media (max-width:620px){.form-grid{grid-template-columns:1fr}}
+
+.radio-row,.button-row,.ask-row{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+.btn{
+  background:#20283a; border:1px solid #2a3246; color:var(--text);
+  padding:8px 12px; border-radius:10px; cursor:pointer;
+}
+.btn.primary{background:var(--primary); color:#07101a; border:none}
+.save-msg{margin-top:8px; color:var(--ok); font-weight:600}
+
+/* Chips & Filters ---------------------------------------------------------- */
+details>summary{cursor:pointer; margin-bottom:6px; font-weight:600}
+.filters{display:flex; flex-direction:column; gap:10px}
+.filters-row{display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px}
+@media (max-width:1100px){.filters-row{grid-template-columns:1fr 1fr}}
+@media (max-width:720px){.filters-row{grid-template-columns:1fr}}
+.filters-actions{display:flex; justify-content:flex-end}
+
+.chips{display:flex; flex-wrap:wrap; gap:8px}
+.chip{
+  display:inline-flex; gap:8px; align-items:center;
+  padding:6px 10px; border-radius:999px; background:var(--chip);
+  border:1px solid var(--chip-border); white-space:nowrap; font-size:.95rem;
+}
+.chip input{margin:0}
+
+.notice{color:var(--muted); font-size:.92rem}
+
+/* Protocol cards ----------------------------------------------------------- */
+.protocol-meta{display:flex; gap:8px; flex-wrap:wrap; margin:.45rem 0 .2rem}
+.badge{
+  padding:4px 8px; border-radius:999px; background:#22304a;
+  border:1px solid #2b3a58; color:#cfe0ff; font-size:.85rem
+}
+
+/* Tables & Diagnostics ----------------------------------------------------- */
+.table{width:100%; border-collapse:collapse}
+.table th,.table td{border-bottom:1px solid #23293a; padding:8px 10px; text-align:left}
+.diag{white-space:pre-wrap; background:#0b0e14; border:1px solid #1c2332; padding:12px; border-radius:12px; max-height:360px; overflow:auto}
+.diag-wrap{display:grid; grid-template-columns:360px 1fr; gap:14px}
+.csv-preview{overflow:auto}
+@media (max-width:1000px){.diag-wrap{grid-template-columns:1fr}}
+
+/* Ask UI ------------------------------------------------------------------- */
+.ask-row input{
+  flex:1; min-width:420px; max-width:900px;
+  background:#0e1220; color:var(--text);
+  border:1px solid #2a3246; border-radius:10px; padding:10px 12px;
+}
+.ask-row input::placeholder{color:#8c95a8}
+
+/* Footer ------------------------------------------------------------------- */
+.app-footer{padding:20px 16px; border-top:1px solid #1f2432; color:var(--muted)}
