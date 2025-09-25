@@ -10,6 +10,7 @@
     X-Frame-Options = "DENY"
     Permissions-Policy = "geolocation=(), microphone=(), camera=()"
 
+# Map friendly path to the function
 [[redirects]]
   from = "/api/coach"
   to = "/.netlify/functions/coach"
