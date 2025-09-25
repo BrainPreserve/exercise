@@ -1,13 +1,15 @@
-/* Brain Health Exercise App — deterministic MVP
+/* Brain Health Exercise App — deterministic + optional AI addendum
    - Loads /data/master.csv with PapaParse
-   - Safety/adaptation gates: HRV Δ%, sleep %, SBP/DBP, CGM TIR, hs-CRP
-   - muscle_mass=1 filter when selected
-   - Saves daily snapshots in localStorage, renders Chart.js line chart
-   - Shows coach_script_non_api when available
-   - Deterministic “Ask the Coach” routing
+   - Gates: HRV Δ%, sleep %, SBP/DBP, CGM TIR, hs-CRP
+   - Plan Exercise Focus radios: muscle | aerobic | both (affects scoring/filtering)
+   - Library: multi-select exercise type checkboxes + focus radios
+   - Saves daily snapshots in localStorage; Chart.js line chart renders immediately after save
+   - Coach text: always shows non-API baseline; optionally appends AI addendum from /api/coach
+   - Hidden Data tab: ?admin=1 (persist), ?admin=0 (disable), Shift+D (toggle in-session)
 */
 
 (function(){
+  // ---------- Elements ----------
   const els = {
     tabs: document.querySelectorAll('.tab'),
     views: document.querySelectorAll('.view'),
@@ -20,15 +22,14 @@
     tir: document.getElementById('tir'),
     crp: document.getElementById('crp'),
     notes: document.getElementById('notes'),
-    muscleFocus: document.getElementById('muscleFocus'),
     saveMetrics: document.getElementById('saveMetrics'),
     genPlan: document.getElementById('genPlan'),
+    clearForm: document.getElementById('clearForm'),
     planSummary: document.getElementById('plan-summary'),
     planGates: document.getElementById('plan-gates'),
     planRecos: document.getElementById('plan-recos'),
     // Library
-    libSearch: document.getElementById('libSearch'),
-    libMuscleOnly: document.getElementById('libMuscleOnly'),
+    libTypeFilters: document.getElementById('libTypeFilters'),
     libraryList: document.getElementById('library-list'),
     // Progress
     trendChartEl: document.getElementById('trendChart'),
@@ -37,22 +38,59 @@
     latestCRP: document.getElementById('latest-crp'),
     exportBtn: document.getElementById('exportMetrics'),
     clearBtn: document.getElementById('clearMetrics'),
-    // Data
+    // Data (admin)
     reloadCsv: document.getElementById('reloadCsv'),
     fileCsv: document.getElementById('fileCsv'),
-    csvPreview: document.getElementById('csvPreview')
+    csvPreview: document.getElementById('csvPreview'),
+    dataView: document.getElementById('data'),
+    dataTabBtn: document.querySelector('.tab.admin-only'),
+    disableAdmin: document.getElementById('disableAdmin'),
+    // Ask
+    askInput: document.getElementById('askInput'),
+    askBtn: document.getElementById('askBtn'),
+    askAnswer: document.getElementById('askAnswer')
   };
 
   const state = {
-    rows: [],             // parsed CSV rows
-    metrics: [],          // [{date, hrvBaseline, hrvToday, hrvDeltaPct, sleepEff, sbp, dbp, tir, crp, notes}]
+    rows: [],              // parsed CSV rows
+    typesSet: new Set(),   // exercise types derived from CSV
+    metrics: [],           // [{date, hrvBaseline, hrvToday, hrvDeltaPct, sleepEff, sbp, dbp, tir, crp, notes}]
     chart: null
   };
 
-  // ---- Tabs
-  els.tabs.forEach(btn=>{
+  // ---------- Admin toggle (Data tab visibility) ----------
+  initAdminFlagFromURL();
+  setupAdminUI();
+  window.addEventListener('keydown', (e)=>{
+    if (e.shiftKey && e.key.toLowerCase()==='d'){
+      const cur = localStorage.getItem('bhe_admin') === '1';
+      localStorage.setItem('bhe_admin', cur ? '0' : '1');
+      setupAdminUI();
+      alert(`Admin ${cur ? 'disabled' : 'enabled'} for this browser.`);
+    }
+  });
+
+  function initAdminFlagFromURL(){
+    const m = new URLSearchParams(location.search).get('admin');
+    if (m === '1') localStorage.setItem('bhe_admin','1');
+    if (m === '0') localStorage.setItem('bhe_admin','0');
+  }
+  function isAdmin(){ return localStorage.getItem('bhe_admin') === '1'; }
+  function setupAdminUI(){
+    const on = isAdmin();
+    // Toggle Data tab button and section
+    if (els.dataTabBtn) els.dataTabBtn.hidden = !on;
+    if (els.dataView) els.dataView.hidden = !on;
+    if (els.disableAdmin){
+      els.disableAdmin.hidden = !on;
+      els.disableAdmin.onclick = (e)=>{ e.preventDefault(); localStorage.setItem('bhe_admin','0'); setupAdminUI(); };
+    }
+  }
+
+  // ---------- Tabs ----------
+  document.querySelectorAll('.tab').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      els.tabs.forEach(b=>b.classList.remove('active'));
+      document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
       btn.classList.add('active');
       const tab = btn.dataset.tab;
       els.views.forEach(v=>v.classList.toggle('active', v.id===tab));
@@ -60,26 +98,22 @@
     });
   });
 
-  // ---- Storage helpers
+  // ---------- Storage helpers ----------
   const STORAGE_KEY = 'bhe_metrics_v1';
   function loadMetrics(){
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      state.metrics = raw ? JSON.parse(raw) : [];
-    } catch { state.metrics = []; }
+    try { state.metrics = JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
+    catch { state.metrics = []; }
   }
-  function saveMetrics(){
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.metrics));
-  }
+  function saveMetrics(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state.metrics)); }
 
-  // ---- CSV load
+  // ---------- CSV load ----------
   async function loadCsvFromPath(path='data/master.csv'){
     try {
-      const res = await fetch(path, { cache: 'no-cache' });
+      const res = await fetch(path, { cache:'no-cache' });
       const text = await res.text();
       const parsed = Papa.parse(text, { header:true, dynamicTyping:true, skipEmptyLines:true });
-      // Normalize headers to snake_case copies as needed
       state.rows = parsed.data.map(r => normalizeRow(r));
+      buildTypeFilters(state.rows);
       renderLibrary();
       previewCsv(state.rows);
     } catch (e){
@@ -89,191 +123,227 @@
     }
   }
 
-  // Normalize/defensive access
   function normalizeRow(r){
-    // Make some friendly aliases
     const out = { ...r };
-    // Normalize muscle_mass to "1" or 1 truthy
     out.muscle_mass = ('' + (r.muscle_mass ?? r.MUSCLE_MASS ?? '')).trim();
-    // Lowercase modality-ish string for scoring
-    out._mod = (r.modality || r.Modality || r['Exercise Type'] || r.exercise_key || '').toString().toLowerCase();
-    // Coach text
+    out._title = r['Exercise Type'] || r.exercise_type || r.exercise_key || 'Protocol';
+    out._modality = (r.modality || r.Modality || '').toString();
+    out._mod = out._modality.toLowerCase();
     out._coach = (r.coach_script_non_api || r.COACH_SCRIPT_NON_API || '').toString().trim();
-    // Contra flags
     out._contra = (r.contraindications_flags || r.CONTRAINDICATIONS_FLAGS || '').toString().toLowerCase();
-    // Targets (optional)
     out._targets = (r.cognitive_targets || r.COGNITIVE_TARGETS || '').toString();
+    out._id = (r.exercise_key || out._title).toString().toLowerCase().replace(/\s+/g,'_');
     return out;
   }
 
-  // ---- Library render
-  function renderLibrary(){
-    const q = els.libSearch.value?.toLowerCase().trim() || '';
-    const mOnly = els.libMuscleOnly.checked;
-    const list = document.createElement('div');
-
-    const data = state.rows.filter(row=>{
-      if (mOnly && !(row.muscle_mass==='1' || row.muscle_mass===1)) return false;
-      if (!q) return true;
-      const blob = JSON.stringify(row).toLowerCase();
-      return blob.includes(q);
+  // ---------- Type filters (multiselect) ----------
+  function buildTypeFilters(rows){
+    state.typesSet = new Set();
+    rows.forEach(row=>{
+      const mods = outTokens(row._modality);
+      mods.forEach(t => state.typesSet.add(t));
     });
-
-    if (data.length===0){
-      els.libraryList.innerHTML = `<p class="small">No matching protocols. Check your CSV or search terms.</p>`;
-      return;
-    }
-    data.forEach(row=>{
-      const title = row['Exercise Type'] || row.exercise_type || row.exercise_key || 'Protocol';
-      const mod = row.modality || '';
-      const targets = row._targets;
-      const mm = (row.muscle_mass==='1'||row.muscle_mass===1) ? 'muscle_mass=1' : '';
-      const coach = row._coach;
-
-      const card = document.createElement('div');
-      card.className = 'rec-card';
-      card.innerHTML = `
-        <div class="title">${escapeHtml(title)}</div>
-        <div class="meta">${escapeHtml(mod)} ${mm ? ' • '+mm : ''}</div>
-        ${targets ? `<div class="small">${escapeHtml(targets)}</div>` : ``}
-        ${coach ? `<div class="coach"><strong>Coach Note:</strong> ${escapeHtml(coach)}</div>` : ``}
-      `;
-      list.appendChild(card);
+    const frag = document.createDocumentFragment();
+    Array.from(state.typesSet).sort().forEach(t=>{
+      const label = document.createElement('label');
+      label.innerHTML = `<input type="checkbox" value="${escapeHtml(t)}" /> ${escapeHtml(titleCase(t))}`;
+      frag.appendChild(label);
     });
-    els.libraryList.replaceChildren(list);
+    els.libTypeFilters.replaceChildren(frag);
+    els.libTypeFilters.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+      cb.addEventListener('change', renderLibrary);
+    });
+    // Library focus radios
+    document.querySelectorAll('input[name=libFocus]').forEach(r=>{
+      r.addEventListener('change', renderLibrary);
+    });
   }
 
-  // ---- Plan generation (deterministic)
-  function computePlanFromLatest(){
-    if (!state.rows.length) return { summary:'No CSV rows loaded.', gates:[], recos:[] };
+  function outTokens(s){
+    return (s||'').toLowerCase().split(/[|,/]/).map(x=>x.trim()).filter(Boolean);
+  }
+  function titleCase(s){
+    return s.replace(/\b[a-z]/g,c=>c.toUpperCase());
+  }
 
-    const m = readFormMetrics(); // uses the current form (whether saved or not)
-    if (!m) return { summary:'Please complete Today’s Inputs first.', gates:[], recos:[] };
+  // ---------- Library render ----------
+  function renderLibrary(){
+    const selectedTypes = Array.from(els.libTypeFilters.querySelectorAll('input[type=checkbox]:checked')).map(i=>i.value);
+    const focus = (document.querySelector('input[name=libFocus]:checked')||{}).value || 'both';
+    const wrap = document.createElement('div');
+
+    let data = state.rows.slice();
+    // Focus → filter
+    if (focus==='muscle') data = data.filter(r => (r.muscle_mass==='1' || r.muscle_mass===1) || /isometric|strength|resist/.test(r._mod));
+    if (focus==='aerobic') data = data.filter(r => /zone ?2|aerobic|endurance|walk|cycle|bike|z2|interval|hiit|cardio/.test(r._mod));
+
+    // Type checkboxes → filter
+    if (selectedTypes.length){
+      data = data.filter(r=>{
+        const mods = outTokens(r._modality);
+        return mods.some(m=>selectedTypes.includes(m));
+      });
+    }
+
+    if (!data.length){
+      els.libraryList.innerHTML = `<p class="small">No matching protocols. Adjust filters or check your CSV.</p>`;
+      return;
+    }
+
+    data.forEach(row=>{
+      const card = document.createElement('div');
+      card.className = 'rec-card';
+      const mm = (row.muscle_mass==='1'||row.muscle_mass===1) ? 'muscle_mass=1' : '';
+      card.innerHTML = `
+        <div class="title">${escapeHtml(row._title)}</div>
+        <div class="meta">${escapeHtml(row._modality)} ${mm ? ' • '+mm : ''}</div>
+        ${row._targets ? `<div class="small">${escapeHtml(row._targets)}</div>` : ``}
+        <div class="coach"><strong>Coach Script:</strong> ${escapeHtml(row._coach || defaultCoachText(row, {}))}</div>
+        <div id="ai_${row._id}" class="coach" style="display:none; margin-top:6px;"></div>
+      `;
+      wrap.appendChild(card);
+      // Try to fetch AI addendum (optional)
+      requestAIAddendum({
+        kind: 'protocol',
+        protocol: { title: row._title, modality: row._modality, coach_script_non_api: row._coach },
+        baseline: defaultCoachText(row, computeFlagsFromForm()),
+      }).then(add=>{
+        if (!add) return;
+        const el = document.getElementById(`ai_${row._id}`);
+        if (el){ el.style.display='block'; el.innerHTML = `<strong>AI Coach Addendum:</strong> ${escapeHtml(add)}`; }
+      }).catch(()=>{ /* silent fallback */ });
+    });
+    els.libraryList.replaceChildren(wrap);
+  }
+
+  // ---------- Plan generation ----------
+  function computeFlagsFromForm(){
+    const base = toNum(els.hrvBaseline.value);
+    const today = toNum(els.hrvToday.value);
+    const sleep = toNum(els.sleepEff.value);
+    const sbp = toNum(els.sbp.value);
+    const dbp = toNum(els.dbp.value);
+    const tir = toNum(els.tir.value);
+    const crp = toNum(els.crp.value);
+    const hrvDeltaPct = (isFinite(base)&&base>0 && isFinite(today)) ? ((today-base)/base)*100 : NaN;
+    return {
+      hrvDeltaPct,
+      sleepEff: sleep,
+      sbp, dbp, tir, crp,
+      hrvLow: isFinite(hrvDeltaPct) && hrvDeltaPct <= -7,
+      sleepLow: sleep < 85,
+      bpHigh: (sbp >= 160 || dbp >= 100),
+      tirLow: tir < 70,
+      crpHigh: crp > 3
+    };
+  }
+
+  function computePlan(){
+    if (!state.rows.length) return { summary:'No CSV rows loaded.', gates:[], recos:[] };
+    const flags = computeFlagsFromForm();
+    if (!isFinite(flags.hrvDeltaPct)) return { summary:'Please complete Today’s Inputs first.', gates:[], recos:[] };
 
     const gates = [];
-    const recs = [];
+    if (flags.bpHigh)  gates.push({tag:'Hypertension (SBP≥160 or DBP≥100): avoid HIIT/plyo', level:'bad'});
+    if (flags.hrvLow)  gates.push({tag:'HRV low (≤ −7% vs baseline): deload', level:'warn'});
+    if (flags.sleepLow)gates.push({tag:'Sleep efficiency <85%: deload', level:'warn'});
+    if (flags.tirLow)  gates.push({tag:'CGM TIR <70%: prioritize resistance + Zone 2', level:'warn'});
+    if (flags.crpHigh) gates.push({tag:'hs-CRP >3 mg/L: prefer low-impact + isometrics', level:'warn'});
 
-    const hrvDelta = m.hrvDeltaPct;              // %
-    const hrvLow = (isFinite(hrvDelta) && hrvDelta <= -7);       // ≤ −7%
-    const sleepLow = (m.sleepEff < 85);
-    const bpHigh = (m.sbp >= 160 || m.dbp >= 100);
-    const tirLow = (m.tir < 70);
-    const crpHigh = (m.crp > 3);
+    const planFocus = (document.querySelector('input[name=planFocus]:checked')||{}).value || 'both';
 
-    if (bpHigh)   gates.push({tag:'Hypertension (SBP≥160 or DBP≥100): avoid HIIT/plyo', level:'bad'});
-    if (hrvLow)   gates.push({tag:'HRV low (≤ −7% vs baseline): deload', level:'warn'});
-    if (sleepLow) gates.push({tag:'Sleep efficiency <85%: deload', level:'warn'});
-    if (tirLow)   gates.push({tag:'CGM TIR <70%: prioritize resistance + Zone 2', level:'warn'});
-    if (crpHigh)  gates.push({tag:'hs-CRP >3 mg/L: prefer low-impact + isometrics', level:'warn'});
-
-    // Score library rows
-    const muscleFocus = (els.muscleFocus.value === 'on');
+    // Score rows based on gates + focus
     const scored = [];
     for (const row of state.rows){
-      if (muscleFocus && !(row.muscle_mass==='1' || row.muscle_mass===1)) continue;
-
-      const mod = (row._mod || '');
-      const title = row['Exercise Type'] || row.exercise_type || row.exercise_key || 'Protocol';
-
+      const mod = row._mod;
       const isRes  = /resist|strength|weights|rt|lift/.test(mod);
-      const isZ2   = /zone ?2|aerobic|endurance|walk|cycle|bike|z2/.test(mod);
+      const isZ2   = /zone ?2|aerobic|endurance|walk|cycle|bike|z2|cardio/.test(mod);
       const isMob  = /mobility|stretch|flex/.test(mod);
       const isIso  = /isometric|isometrics|iso/.test(mod);
       const isHIIT = /hiit|interval/.test(mod);
       const isPlyo = /plyo/.test(mod);
-      const isBreath = /breath|breathing|mindful|coherent/.test(mod);
 
-      let score = 1; // base
-      // Gates → scoring preferences
-      if (bpHigh){ // no HIIT/plyo
-        if (isHIIT || isPlyo) score -= 50;
-        if (isMob || isBreath || isZ2) score += 4;
-        if (isIso) score += 3;
-      }
-      if (hrvLow || sleepLow){
+      let score = 1;
+
+      // Focus bias
+      if (planFocus==='muscle'){
+        if (row.muscle_mass==='1' || row.muscle_mass===1) score += 6;
+        if (isRes || isIso) score += 3;
+        if (isZ2) score -= 1;
+      } else if (planFocus==='aerobic'){
         if (isZ2) score += 4;
-        if (isMob) score += 3;
-        if (isHIIT || isPlyo) score -= 6;
-        if (isRes) score -= 1; // conservative deloading bias
+        if (isMob) score += 1;
+        if (isRes) score -= 1; // still allowed but deprioritized
+      } else {
+        // both: slight preference to safer modalities first
+        if (isZ2 || isMob) score += 2;
       }
-      if (tirLow){
-        if (isRes) score += 5;
-        if (isZ2) score += 3;
-      }
-      if (crpHigh){
-        if (isIso || isZ2) score += 3;
-        if (isPlyo || isHIIT) score -= 3;
-      }
-      // If row lists contraindications and they include hiit/plyo, bias down
+
+      // Gates
+      if (flags.bpHigh){ if (isHIIT || isPlyo) score -= 50; if (isMob || isZ2) score += 4; if (isIso) score += 3; }
+      if (flags.hrvLow || flags.sleepLow){ if (isZ2) score += 4; if (isMob) score += 3; if (isHIIT||isPlyo) score -= 6; if (isRes) score -= 1; }
+      if (flags.tirLow){ if (isRes) score += 5; if (isZ2) score += 3; }
+      if (flags.crpHigh){ if (isIso || isZ2) score += 3; if (isPlyo || isHIIT) score -= 3; }
+
       if (row._contra.includes('hiit') || row._contra.includes('plyo')) score -= 2;
 
-      scored.push({ row, title, score });
+      scored.push({ row, score });
     }
 
     scored.sort((a,b)=>b.score - a.score);
-    const top = scored.slice(0, 5);
+    const top = scored.slice(0,5).map(t=>t.row);
 
-    // Build summary text
     const summary = [
-      `HRV Δ%: ${fmtPct(hrvDelta)}  |  Sleep: ${m.sleepEff}%  |  BP: ${m.sbp}/${m.dbp}  |  TIR: ${m.tir}%  |  hs-CRP: ${m.crp} mg/L`,
-      bpHigh   ? `• High BP gate active → avoid HIIT/plyometrics; choose mobility, isometrics, easy Zone 2.` : ``,
-      (hrvLow || sleepLow) ? `• Recovery gate active → deload intensity; emphasize Zone 2 + mobility.` : ``,
-      tirLow   ? `• Glycemic control focus → prioritize resistance first, then Zone 2; add post-meal walks.` : ``,
-      crpHigh  ? `• Inflammation high → lower impact; favor isometrics/low-impact aerobic.` : ``,
+      `HRV Δ%: ${fmtPct(flags.hrvDeltaPct)}  |  Sleep: ${round1(flags.sleepEff)}%  |  BP: ${flags.sbp}/${flags.dbp}  |  TIR: ${round1(flags.tir)}%  |  hs-CRP: ${round1(flags.crp)} mg/L`,
+      flags.bpHigh  ? `• High BP gate → avoid HIIT/plyo; prefer mobility, isometrics, easy Zone 2.` : ``,
+      (flags.hrvLow || flags.sleepLow) ? `• Recovery gate → deload; emphasize Zone 2 + mobility.` : ``,
+      flags.tirLow  ? `• TIR <70% → resistance first, then Zone 2; add post-meal walks.` : ``,
+      flags.crpHigh ? `• CRP >3 → low-impact aerobic/isometrics; limit impact until improved.` : ``,
     ].filter(Boolean).join('\n');
 
-    // Recommendations display objects
-    top.forEach(t=>{
-      const r = t.row;
-      const coach = r._coach ? r._coach : defaultCoachText(r, {bpHigh, hrvLow, sleepLow, tirLow, crpHigh});
-      recs.push({
-        title: t.title,
-        modality: r.modality || '',
-        meta: [ (r.muscle_mass==='1'||r.muscle_mass===1) ? 'muscle_mass=1' : '', r.cognitive_targets || ''].filter(Boolean).join(' • '),
-        coach
-      });
-    });
-
-    return { summary, gates, recos: recs };
+    return { summary, gates, top, flags };
   }
 
-  function defaultCoachText(row, flags){
-    const bits = [];
-    if (flags.bpHigh)  bits.push('Avoid HIIT/plyometrics today; choose lower-impact work.');
-    if (flags.hrvLow || flags.sleepLow) bits.push('Deload intensity/volume; keep RPE ≤ 6/10.');
-    if (flags.tirLow)  bits.push('Resistance first (glycemic benefit), then easy Zone 2.');
-    if (flags.crpHigh) bits.push('Favor isometrics/low-impact aerobic; limit impact until CRP improves.');
-    return (row.coach_script_non_api ? String(row.coach_script_non_api) + ' ' : '') + bits.join(' ');
-  }
-
-  // ---- Renderers
   function renderPlan(){
-    const { summary, gates, recos } = computePlanFromLatest();
-    els.planSummary.textContent = summary || '';
+    const res = computePlan();
+    els.planSummary.textContent = res.summary || '';
     // badges
     const frag = document.createDocumentFragment();
-    if (gates.length===0){
-      const b = badge('No active safety gates', 'ok');
-      frag.appendChild(b);
-    } else {
-      gates.forEach(g=>{
-        const b = badge(g.tag, g.level);
-        frag.appendChild(b);
-      });
-    }
+    if (!res.gates.length) frag.appendChild(badge('No active safety gates','ok'));
+    else res.gates.forEach(g=>frag.appendChild(badge(g.tag,g.level)));
     els.planGates.replaceChildren(frag);
 
     // recos
     const wrap = document.createElement('div');
-    recos.forEach(r=>{
+    (res.top || []).forEach(row=>{
+      const mm = (row.muscle_mass==='1'||row.muscle_mass===1) ? 'muscle_mass=1' : '';
+      const id = row._id;
+      const coachBaseline = (row._coach ? row._coach + ' ' : '') + defaultCoachText(row, res.flags);
       const div = document.createElement('div');
       div.className = 'rec-card';
       div.innerHTML = `
-        <div class="title">${escapeHtml(r.title)}</div>
-        <div class="meta">${escapeHtml(r.modality || '')}${r.meta ? ' • '+escapeHtml(r.meta) : ''}</div>
-        <div class="coach">${escapeHtml(r.coach)}</div>
+        <div class="title">${escapeHtml(row._title)}</div>
+        <div class="meta">${escapeHtml(row._modality)} ${mm ? ' • '+mm : ''}</div>
+        ${row._targets ? `<div class="small">${escapeHtml(row._targets)}</div>` : ``}
+        <div class="coach"><strong>Coach Script:</strong> ${escapeHtml(coachBaseline)}</div>
+        <div id="ai_${id}" class="coach" style="display:none; margin-top:6px;"></div>
       `;
       wrap.appendChild(div);
+
+      // Optional AI addendum (try; fallback silent). Limit to top 3 to reduce cost/latency.
+      if ((res.top||[]).slice(0,3).includes(row)){
+        requestAIAddendum({
+          kind:'protocol',
+          protocol: { title: row._title, modality: row._modality, coach_script_non_api: row._coach },
+          metrics: minimalMetrics(),
+          gates: summarizeGates(res.flags),
+          baseline: coachBaseline
+        }).then(add=>{
+          if (!add) return;
+          const el = document.getElementById(`ai_${id}`);
+          if (el){ el.style.display='block'; el.innerHTML = `<strong>AI Coach Addendum:</strong> ${escapeHtml(add)}`; }
+        }).catch(()=>{ /* ignore */ });
+      }
     });
     els.planRecos.replaceChildren(wrap);
   }
@@ -285,42 +355,46 @@
     return span;
   }
 
+  function defaultCoachText(row, f){
+    const bits = [];
+    if (f.bpHigh)  bits.push('Avoid HIIT/plyometrics today; choose lower-impact work.');
+    if (f.hrvLow || f.sleepLow) bits.push('Deload intensity/volume; keep RPE ≤ 6/10.');
+    if (f.tirLow)  bits.push('Resistance first (glycemic benefit), then easy Zone 2.');
+    if (f.crpHigh) bits.push('Favor isometrics/low-impact aerobic; limit impact until CRP improves.');
+    return bits.join(' ') || 'Follow conservative progression and stop for warning symptoms.';
+  }
+
+  // ---------- Data preview ----------
   function previewCsv(rows){
     if (!rows || !rows.length){
-      els.csvPreview.innerHTML = `<p class="small">No data loaded. Ensure <code>/data/master.csv</code> exists in your repository.</p>`;
+      if (els.csvPreview) els.csvPreview.innerHTML = `<p class="small">No data loaded. Ensure <code>/data/master.csv</code> exists.</p>`;
       return;
     }
     const headers = Object.keys(rows[0]);
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const trh = document.createElement('tr');
-    headers.slice(0,10).forEach(h=>{
-      const th = document.createElement('th');
-      th.textContent = h;
-      trh.appendChild(th);
-    });
+    headers.slice(0,10).forEach(h=>{ const th=document.createElement('th'); th.textContent=h; trh.appendChild(th); });
     thead.appendChild(trh);
     table.appendChild(thead);
     const tbody = document.createElement('tbody');
     rows.slice(0,20).forEach(r=>{
       const tr = document.createElement('tr');
-      headers.slice(0,10).forEach(h=>{
-        const td = document.createElement('td');
-        td.textContent = (r[h] ?? '').toString();
-        tr.appendChild(td);
-      });
+      headers.slice(0,10).forEach(h=>{ const td=document.createElement('td'); td.textContent = (r[h] ?? '').toString(); tr.appendChild(td); });
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
-    els.csvPreview.replaceChildren(table);
+    if (els.csvPreview) els.csvPreview.replaceChildren(table);
   }
 
-  // ---- Progress
+  // ---------- Progress (chart + table) ----------
   function drawChart(){
     const labels = state.metrics.map(m=>m.date);
     const hrv = state.metrics.map(m=>m.hrvDeltaPct);
     const sleep = state.metrics.map(m=>m.sleepEff);
     const tir = state.metrics.map(m=>m.tir);
+
+    if (!els.trendChartEl) return;
 
     if (state.chart){
       state.chart.data.labels = labels;
@@ -344,14 +418,12 @@
           responsive: true,
           maintainAspectRatio: false,
           plugins: { legend: { display: true } },
-          scales: {
-            y: { beginAtZero: true }
-          }
+          scales: { y: { beginAtZero: true } }
         }
       });
     }
 
-    // latest vitals (bp, crp)
+    // latest vitals
     if (state.metrics.length){
       const last = state.metrics[state.metrics.length-1];
       els.latestBP.textContent = `${last.sbp}/${last.dbp} mmHg`;
@@ -384,25 +456,24 @@
     els.savedTable.replaceChildren(table);
   }
 
-  // ---- Ask (deterministic)
+  // ---------- Ask (baseline + optional AI addendum) ----------
   function deterministicAnswer(q){
     const L = q.toLowerCase();
-    const last = state.metrics[state.metrics.length-1] || readFormMetrics() || {};
+    const last = state.metrics[state.metrics.length-1] || minimalMetrics();
     const bpHigh = (toNum(last.sbp) >= 160 || toNum(last.dbp) >= 100);
     const hrvLow = isFinite(last.hrvDeltaPct) && last.hrvDeltaPct <= -7;
     const sleepLow = toNum(last.sleepEff) < 85;
     const tirLow = toNum(last.tir) < 70;
     const crpHigh = toNum(last.crp) > 3;
 
-    // Safety-first routing
     if (/hiit|interval/.test(L)){
       if (bpHigh) return `No — SBP≥160 or DBP≥100: avoid HIIT/plyometrics. Choose mobility, isometrics, breathing, or easy Zone 2.`;
-      if (hrvLow || sleepLow) return `Not today — recovery gate active (HRV low or sleep <85%). Favor easy Zone 2 + mobility; RPE ≤ 6/10.`;
-      if (crpHigh) return `Caution — hs-CRP >3 mg/L suggests lower-impact work; defer HIIT until inflammation improves.`;
-      return `Yes, if you have no red flags today and feel well. Keep warm-up thorough, intervals modest, and stop for any warning symptoms.`;
+      if (hrvLow || sleepLow) return `Not today — recovery gate active. Favor easy Zone 2 + mobility; RPE ≤ 6/10.`;
+      if (crpHigh) return `Caution — hs-CRP >3 mg/L: prefer lower-impact work; defer HIIT until improved.`;
+      return `Yes if no red flags. Warm up thoroughly; keep intervals modest; stop for any warning symptoms.`;
     }
     if (/zone ?2|aerobic|walk|cycle|bike/.test(L)){
-      if (bpHigh) return `Yes, but easy only. With SBP≥160/DBP≥100, limit to easy Zone 2, mobility, or breathing; avoid high intensity.`;
+      if (bpHigh) return `Yes, but easy only. With SBP≥160/DBP≥100, limit to easy Zone 2/mobility/breathing; avoid high intensity.`;
       if (hrvLow || sleepLow) return `Yes — preferred on recovery days. Keep RPE ≤ 6/10 and duration modest.`;
       return `Yes — Zone 2 supports perfusion and metabolic health relevant to cognition. Keep it conversational.`;
     }
@@ -412,57 +483,49 @@
       return `Yes — resistance supports muscle mass, insulin sensitivity, and function. Use safe technique and progressive loads.`;
     }
     if (/bp|blood pressure|hypertens/.test(L)){
-      return `If SBP≥160 or DBP≥100 today → avoid HIIT/plyometrics; choose mobility, isometrics, breathing, or easy Zone 2. Recheck BP and seek care for SBP≥180 or concerning symptoms.`;
+      return `If SBP≥160 or DBP≥100 → avoid HIIT/plyometrics; choose mobility, isometrics, breathing, or easy Zone 2. Recheck BP; seek care for SBP≥180 or concerning symptoms.`;
     }
-    if (/hrv/.test(L)){
-      return `If HRV ≤ −7% vs baseline → deload intensity/volume. Favor easy Zone 2 + mobility; keep RPE ≤ 6/10.`;
-    }
-    if (/\bsleep\b/.test(L)){
-      return `If sleep efficiency <85% → recovery bias: easy Zone 2, mobility, breathing; avoid maximal work.`;
-    }
-    if (/\bcrp\b|inflamm/.test(L)){
-      return `If hs-CRP >3 mg/L → prefer low-impact aerobic and isometrics; limit impact and very high intensity until improved.`;
-    }
-    if (/\btir\b|time in range|glucose/.test(L)){
-      return `If CGM TIR <70% → prioritize resistance training first, then easy Zone 2; consider post-meal walks.`;
-    }
-    if (/dual[- ]?task|cognitive|brain/.test(L)){
-      return `Dual-task is encouraged for cognition. Keep RPE ≤ 6/10, progress complexity first, and apply the daily gates before intensity.`;
-    }
-    return `General guidance: screen daily metrics; apply gates (BP, HRV, sleep, TIR, CRP). If no red flags, progress gradually. Stop for chest pain, severe dyspnea, dizziness, or near-fall.`;
+    if (/hrv/.test(L)){ return `If HRV ≤ −7% vs baseline → deload intensity/volume. Favor easy Zone 2 + mobility; RPE ≤ 6/10.`; }
+    if (/\bsleep\b/.test(L)){ return `If sleep efficiency <85% → recovery bias: easy Zone 2, mobility, breathing; avoid maximal work.`; }
+    if (/\bcrp\b|inflamm/.test(L)){ return `If hs-CRP >3 mg/L → prefer low-impact aerobic and isometrics; limit impact and very high intensity until improved.`; }
+    if (/\btir\b|time in range|glucose/.test(L)){ return `If CGM TIR <70% → prioritize resistance first, then easy Zone 2; consider post-meal walks.`; }
+    if (/dual[- ]?task|cognitive|brain/.test(L)){ return `Dual-task is encouraged for cognition. Keep RPE ≤ 6/10, progress complexity first, and apply daily gates before intensity.`; }
+    return `Screen daily metrics; apply gates (BP, HRV, sleep, TIR, CRP). If no red flags, progress gradually. Stop for chest pain, severe dyspnea, dizziness, or near-fall.`;
   }
 
-  // ---- Events
+  // ---------- Events ----------
   els.saveMetrics.addEventListener('click', ()=>{
     const m = readFormMetrics(true);
     if (!m) return;
     state.metrics.push(m);
     saveMetrics();
+    drawChart();               // ensures line chart shows immediately
     renderPlan();
-    if (document.querySelector('.tab.active')?.dataset.tab !== 'progress'){
-      // hint only
-    }
     alert('Saved today’s metrics.');
   });
 
   els.genPlan.addEventListener('click', renderPlan);
-  els.libSearch.addEventListener('input', renderLibrary);
-  els.libMuscleOnly.addEventListener('change', renderLibrary);
 
-  document.getElementById('askBtn').addEventListener('click', ()=>{
-    const q = document.getElementById('askInput').value.trim();
-    if (!q) return;
-    document.getElementById('askAnswer').textContent = deterministicAnswer(q);
+  els.clearForm.addEventListener('click', ()=>{
+    ['hrvBaseline','hrvToday','sleepEff','sbp','dbp','tir','crp','notes'].forEach(id=>{
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    document.querySelector('input[name=planFocus][value=both]').checked = true;
+    els.planSummary.textContent = '';
+    els.planGates.replaceChildren();
+    els.planRecos.replaceChildren();
   });
 
-  els.reloadCsv.addEventListener('click', ()=> loadCsvFromPath('data/master.csv'));
-  els.fileCsv.addEventListener('change', (e)=>{
+  if (els.reloadCsv) els.reloadCsv.addEventListener('click', ()=> loadCsvFromPath('data/master.csv'));
+  if (els.fileCsv) els.fileCsv.addEventListener('change', (e)=>{
     const f = e.target.files?.[0];
     if (!f) return;
     Papa.parse(f, {
       header:true, dynamicTyping:true, skipEmptyLines:true,
       complete: (res)=>{
         state.rows = res.data.map(normalizeRow);
+        buildTypeFilters(state.rows);
         renderLibrary();
         previewCsv(state.rows);
         alert('Loaded local CSV (not saved).');
@@ -470,7 +533,7 @@
     });
   });
 
-  els.exportBtn.addEventListener('click', ()=>{
+  if (els.exportBtn) els.exportBtn.addEventListener('click', ()=>{
     if (!state.metrics.length){ alert('No saved metrics.'); return; }
     const headers = ['date','hrvBaseline','hrvToday','hrvDeltaPct','sleepEff','sbp','dbp','tir','crp','notes'];
     const csv = [headers.join(',')].concat(state.metrics.map(m=>headers.map(h=>csvSafe(m[h])).join(','))).join('\n');
@@ -482,21 +545,98 @@
     URL.revokeObjectURL(a.href);
   });
 
-  els.clearBtn.addEventListener('click', ()=>{
+  if (els.clearBtn) els.clearBtn.addEventListener('click', ()=>{
     if (!confirm('This will delete all saved metrics from this browser. Continue?')) return;
     state.metrics = [];
     saveMetrics();
     drawChart();
   });
 
-  // ---- Init
+  if (els.askBtn) els.askBtn.addEventListener('click', async ()=>{
+    const q = (els.askInput.value || '').trim();
+    if (!q) return;
+    const baseline = deterministicAnswer(q);
+    els.askAnswer.textContent = `Baseline Answer:\n${baseline}`;
+
+    try {
+      const add = await requestAIAddendum({
+        kind:'ask',
+        query:q,
+        metrics: minimalMetrics(),
+        gates: summarizeGates(computeFlagsFromForm()),
+        baseline
+      });
+      if (add){
+        els.askAnswer.textContent += `\n\nAI Coach Addendum:\n${add}`;
+      }
+    } catch {
+      // silent fallback
+    }
+  });
+
+  // ---------- Init ----------
   loadMetrics();
   loadCsvFromPath('data/master.csv');
   renderLibrary();
   drawChart();
   renderPlan();
 
-  // ---- Utils
+  // ---------- AI addendum helper ----------
+  async function requestAIAddendum(payload){
+    // Try the Netlify function; return empty string on error.
+    try {
+      const res = await fetch('/api/coach', {
+        method:'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify(sanitizePayload(payload))
+      });
+      if (!res.ok) return '';
+      const data = await res.json();
+      const add = (data && data.addendum || '').toString().trim();
+      return add;
+    } catch(e){
+      return '';
+    }
+  }
+
+  function sanitizePayload(p){
+    // Keep only non-identifying, minimal fields
+    const out = { kind:p.kind, baseline:p.baseline||'' };
+    if (p.query) out.query = String(p.query).slice(0,500);
+    if (p.protocol){
+      out.protocol = {
+        title: (p.protocol.title||'').toString(),
+        modality: (p.protocol.modality||'').toString()
+      };
+    }
+    if (p.metrics) out.metrics = p.metrics;
+    if (p.gates) out.gates = p.gates;
+    return out;
+  }
+
+  function minimalMetrics(){
+    const m = state.metrics[state.metrics.length-1] || readFormMetrics(false) || {};
+    return {
+      hrvDeltaPct: toNum(m.hrvDeltaPct),
+      sleepEff: toNum(m.sleepEff),
+      sbp: toNum(m.sbp),
+      dbp: toNum(m.dbp),
+      tir: toNum(m.tir),
+      crp: toNum(m.crp)
+    };
+  }
+
+  function summarizeGates(f){
+    return {
+      bpHigh: !!f.bpHigh,
+      hrvLow: !!f.hrvLow,
+      sleepLow: !!f.sleepLow,
+      tirLow: !!f.tirLow,
+      crpHigh: !!f.crpHigh
+    };
+  }
+
+  // ---------- Utilities ----------
   function readFormMetrics(validate=false){
     const base = toNum(els.hrvBaseline.value);
     const today = toNum(els.hrvToday.value);
