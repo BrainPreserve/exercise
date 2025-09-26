@@ -5,7 +5,7 @@
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
-const on = (el, ev, fn) => el.addEventListener(ev, fn);
+const on = (el, ev, fn) => el && el.addEventListener(ev, fn);
 
 /* ---------- string & CSV helpers ---------- */
 const splitMulti = (raw) => {
@@ -19,34 +19,29 @@ const splitMulti = (raw) => {
 const htmlEscape = (s='') =>
   s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]);
 
-/* ---------- column detection ---------- */
-const normalize = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g,'_');
+/* ---------- column detection (case/space tolerant) ---------- */
+const normalize = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g,'_');
 
 const detectColumnSet = (rows) => {
   const cols = Object.keys(rows[0] || {});
   const normMap = {};
   for (const c of cols) normMap[normalize(c)] = c;
-
   const pick = (...aliases) => {
-    for (const a of aliases) {
-      const n = normalize(a);
-      if (normMap[n]) return normMap[n];
-    }
+    for (const a of aliases) { const k = normMap[normalize(a)]; if (k) return k; }
     return undefined;
   };
-
   return {
-    title:        pick('title','name','protocol'),
-    summary:      pick('summary','desc','description','details'),
-    goals:        pick('goals','goal','indications'),
-    exercise_type:pick('exercise_type','exercise type','type','modality'),
-    equipment:    pick('equipment','home_equipment'),
-    time_min:     pick('time_minutes','duration_minutes'),
-    coach_non_api:pick('coach_script_non_api','non_api_coach','coach_text'),
-    safety:       pick('safety','contraindications','notes'),
-    intensity:    pick('intensity','rpe','zone'),
-    tags:         pick('tags','labels'),
-    key:          pick('exercise_key','key','id')
+    title:         pick('title','name','protocol'),
+    summary:       pick('summary','desc','description','details'),
+    goals:         pick('goals','goal','indications'),
+    exercise_type: pick('exercise_type','exercise type','type','modality'),
+    equipment:     pick('equipment','home_equipment'),
+    time_min:      pick('time_minutes','duration_minutes'),
+    coach_non_api: pick('coach_script_non_api','non_api_coach','coach_text'),
+    safety:        pick('safety','contraindications','notes'),
+    intensity:     pick('intensity','rpe','zone'),
+    tags:          pick('tags','labels'),
+    key:           pick('exercise_key','key','id')
   };
 };
 
@@ -98,7 +93,8 @@ const loadCSV = () => new Promise((resolve, reject) => {
       State.rows = rows;
       State.cols = detectColumnSet(rows);
       const diag = { detected_columns: State.cols, total_rows: rows.length, sample_row: rows[0]||null };
-      $('#csvDiag').textContent = JSON.stringify(diag, null, 2);
+      const diagEl = $('#csvDiag');
+      if (diagEl) diagEl.textContent = JSON.stringify(diag, null, 2);
       renderCSVPreview(); // admin-only table
       resolve();
     },
@@ -109,17 +105,14 @@ const loadCSV = () => new Promise((resolve, reject) => {
 /* ---------- Data tab: preview ---------- */
 const renderCSVPreview = () => {
   if (!State.admin) return;
-  const tbl = $('#csvTable');
-  if (!tbl) return;
+  const tbl = $('#csvTable'); if (!tbl) return;
   tbl.innerHTML = '';
   const rows = State.rows.slice(0,50);
   if (!rows.length) return;
-
   const cols = Object.keys(rows[0]);
   const thead = document.createElement('thead');
   thead.innerHTML = `<tr>${cols.map(c=>`<th>${htmlEscape(c)}</th>`).join('')}</tr>`;
   tbl.appendChild(thead);
-
   const tb = document.createElement('tbody');
   for (const r of rows) {
     const tr = document.createElement('tr');
@@ -178,7 +171,6 @@ const clearLibraryFilters = () => {
   State.filters.types.clear();
   State.filters.equip.clear();
   State.filters.time = null;
-  // Uncheck all checkboxes & radios
   $$('#goalChips input, #typeChips input, #equipChips input').forEach(i => i.checked = false);
   $$('input[name="timeOpt"]').forEach(r => r.checked = false);
   renderLibrary();
@@ -291,7 +283,7 @@ const renderLibrary = async () => {
 
 /* ---------- Plan: deterministic + save ---------- */
 const computePlanDeterministic = (m) => {
-  const hrvDelta = ((m.hrvToday - m.hrvBaseline) / m.hrvBaseline) * 100;
+  const hrvDelta = m.hrvBaseline ? ((m.hrvToday - m.hrvBaseline) / m.hrvBaseline) * 100 : 0;
   const riskyBP = (m.sbp >= 160) || (m.dbp >= 100);
   const poorSleep = m.sleepEff < 80;
   const lowTIR = m.tir < 70;
@@ -302,7 +294,7 @@ const computePlanDeterministic = (m) => {
   if (poorSleep && focus === 'muscle') focus = 'both';
 
   const msg = [
-    `HRV Δ: ${hrvDelta.toFixed(1)}%`,
+    `HRV Δ: ${isFinite(hrvDelta)?hrvDelta.toFixed(1):'—'}%`,
     `Sleep eff: ${m.sleepEff}%`,
     `BP: ${m.sbp}/${m.dbp} mmHg`,
     `TIR: ${m.tir}%`,
@@ -330,7 +322,7 @@ const wirePlan = () => {
   const f = $('#metricsForm');
 
   on(f, 'submit', async (e) => {
-    e.preventDefault();
+    e.preventDefault(); // prevent page reload/clear
     const m = {
       hrvBaseline: Number($('#hrvBaseline').value),
       hrvToday: Number($('#hrvToday').value),
@@ -361,7 +353,6 @@ const wirePlan = () => {
   });
 
   on($('#saveMetrics'), 'click', () => {
-    // Each save has a precise timestamp; multiple entries per day allowed
     const now = new Date();
     const entry = {
       id: now.getTime(), // unique
@@ -380,7 +371,7 @@ const wirePlan = () => {
     localStorage.setItem('bp_days', JSON.stringify(arr));
     renderDays();
     renderChart();
-    const msg = $('#saveMsg'); msg.hidden = false;
+    $('#saveMsg').hidden = false;
   });
 };
 
@@ -423,18 +414,23 @@ const deterministicAnswer = (q) => {
       ...(c.tags? splitMulti(r[c.tags]):[])
     ].filter(Boolean).join(' ').toLowerCase();
     if (fields.includes(text)) picks.push(r);
-    if (picks.length >= 5) break;
+    if (picks.length >= 3) break;
   }
   if (!picks.length) return 'No deterministic match in the CSV for that query.';
-  return 'Potential protocols: ' + picks.map(r => (col(r,c.title) || col(r,c.exercise_type) || col(r,c.key) || 'Protocol')).join(' · ');
+  // Return titles and any available non-API summary for the top matches
+  return picks.map(r => {
+    const title = col(r,c.title) || col(r,c.exercise_type) || col(r,c.key) || 'Protocol';
+    const nonAPI = col(r,c.coach_non_api) || '';
+    return `<p><strong>${htmlEscape(title)}</strong>${nonAPI?`: ${htmlEscape(nonAPI)}`:''}</p>`;
+  }).join('');
 };
 
 const wireAsk = () => {
   on($('#askBtn'), 'click', async () => {
     const q = ($('#askInput').value || '').trim();
     if (!q) return;
-    $('#askOutDet').innerHTML = `<p>${htmlEscape(deterministicAnswer(q))}</p>`;
-    const ai = await callCoachAPI(`Question: ${q}\nAdd a concise coaching paragraph for an older adult focused on brain health. Avoid repeating any deterministic list I provided.`);
+    $('#askOutDet').innerHTML = deterministicAnswer(q);
+    const ai = await callCoachAPI(`Question: ${q}\nAdd a concise coaching paragraph for an older adult focused on brain health. Avoid repeating any deterministic details shown.`);
     if (ai && ai.trim()) {
       $('#askOutAIText').textContent = ai.trim();
       $('#askOutAI').hidden = false;
