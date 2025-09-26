@@ -34,6 +34,7 @@
   <main class="container">
     <div id="error-banner" class="error-banner" hidden></div>
 
+    <!-- PLAN -->
     <section id="tab-plan" class="tabpanel active" role="tabpanel">
       <div class="grid plan-grid">
         <div class="card">
@@ -89,14 +90,10 @@
           <h2>Today’s Plan</h2>
           <div id="plan-output" class="plan-output"></div>
         </div>
-
-        <div class="card fullwidth">
-          <h2>Progress (HRV Δ% over time)</h2>
-          <canvas id="hrvChart" height="120"></canvas>
-        </div>
       </div>
     </section>
 
+    <!-- LIBRARY -->
     <section id="tab-library" class="tabpanel" role="tabpanel">
       <div class="card">
         <div class="library-header">
@@ -110,13 +107,18 @@
       </div>
     </section>
 
+    <!-- PROGRESS -->
     <section id="tab-progress" class="tabpanel" role="tabpanel">
       <div class="card">
-        <h2>History</h2>
+        <h2>History & Trends</h2>
+        <div class="fullwidth" style="margin-bottom:12px">
+          <canvas id="hrvChart" height="120"></canvas>
+        </div>
         <div id="history-table"></div>
       </div>
     </section>
 
+    <!-- ASK -->
     <section id="tab-ask" class="tabpanel" role="tabpanel">
       <div class="card">
         <h2>Ask the Coach</h2>
@@ -131,6 +133,7 @@
       </div>
     </section>
 
+    <!-- DATA -->
     <section id="tab-data" class="tabpanel" role="tabpanel">
       <div class="card">
         <h2>CSV Diagnostics</h2>
