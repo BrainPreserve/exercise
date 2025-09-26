@@ -24,7 +24,8 @@
         <button class="tab active" data-tab="plan" role="tab" aria-selected="true">Plan</button>
         <button class="tab" data-tab="library" role="tab" aria-selected="false">Library</button>
         <button class="tab" data-tab="progress" role="tab" aria-selected="false">Progress</button>
-        <!-- Data tab button intentionally removed from normal navigation -->
+        <button class="tab" data-tab="ask" role="tab" aria-selected="false">Ask</button>
+        <!-- Data tab button intentionally hidden from nav -->
       </nav>
     </div>
   </header>
@@ -96,7 +97,22 @@
       </div>
     </section>
 
-    <!-- DATA (hidden; only visible via #admin or Shift+D x3) -->
+    <!-- ASK -->
+    <section id="tab-ask" class="tabpanel" role="tabpanel">
+      <div class="card">
+        <h2>Ask the Coach</h2>
+        <p class="muted">
+          Works without Plan data. You’ll see deterministic suggestions from the CSV plus an AI addendum.
+        </p>
+        <div class="ask-row">
+          <input id="ask-input" class="ask-input" placeholder="e.g., walking HIIT; short joint-friendly session" />
+          <button id="ask-btn" class="btn primary" type="button">Ask</button>
+        </div>
+        <div id="ask-output" class="ask-output"></div>
+      </div>
+    </section>
+
+    <!-- DATA (hidden; open with #admin or Shift+D ×3) -->
     <section id="tab-data" class="tabpanel" role="tabpanel" hidden>
       <div class="card">
         <h2>CSV Diagnostics</h2>
