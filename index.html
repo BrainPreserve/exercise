@@ -1,176 +1,167 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>BrainPreserve — Exercise Coach</title>
-  <meta name="description" content="CSV-driven exercise coaching for cognitive health with integrated AI addenda." />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover"
+  />
+  <title>Brain Exercise App</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+
+  <!-- Styles -->
   <link rel="stylesheet" href="assets/styles.css" />
-  <!-- CDNs (no build tools) -->
-  <script defer src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script defer src="assets/app.js"></script>
+
+  <!-- PapaParse & Chart.js (CDN; no build tools) -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+
+  <!-- App -->
+  <script src="assets/app.js" defer></script>
 </head>
 <body>
-  <header class="app-header">
-    <h1>BrainPreserve — Exercise Coach</h1>
-    <nav class="tabs" aria-label="Primary">
-      <button class="tab active" data-tab="plan">Plan</button>
-      <button class="tab" data-tab="library">Library</button>
-      <button class="tab" data-tab="progress">Progress</button>
-      <button class="tab" data-tab="ask">Ask</button>
-      <button class="tab admin-only" data-tab="data" hidden>Data</button>
-    </nav>
+  <header class="site-header">
+    <div class="container">
+      <h1>Brain Exercise App</h1>
+      <nav class="tabs" role="tablist" aria-label="Main">
+        <button class="tab active" data-tab="plan" role="tab" aria-selected="true">Plan</button>
+        <button class="tab" data-tab="library" role="tab" aria-selected="false">Library</button>
+        <button class="tab" data-tab="progress" role="tab" aria-selected="false">Progress</button>
+        <button class="tab" data-tab="ask" role="tab" aria-selected="false">Ask</button>
+        <button class="tab" data-tab="data" role="tab" aria-selected="false">Data</button>
+      </nav>
+    </div>
   </header>
 
-  <main>
+  <main class="container">
+    <!-- Error banner (fails soft; does not break tabs) -->
+    <div id="error-banner" class="error-banner" hidden></div>
+
     <!-- PLAN -->
-    <section id="plan" class="view active">
-      <div class="grid-2">
+    <section id="tab-plan" class="tabpanel active" role="tabpanel" aria-labelledby="Plan">
+      <div class="grid plan-grid">
         <div class="card">
           <h2>Today’s Inputs</h2>
-          <form id="metricsForm" class="form-grid" autocomplete="off">
-            <div>
+
+          <form id="plan-form" autocomplete="off" novalidate>
+            <div class="field">
               <label for="hrvBaseline">HRV 7-day baseline (ms)</label>
-              <input id="hrvBaseline" type="number" min="1" step="1" placeholder="e.g., 40" required />
+              <input id="hrvBaseline" inputmode="decimal" placeholder="e.g., 40" />
             </div>
-            <div>
+
+            <div class="field">
               <label for="hrvToday">HRV today (ms)</label>
-              <input id="hrvToday" type="number" min="1" step="1" placeholder="e.g., 36" required />
+              <input id="hrvToday" inputmode="decimal" placeholder="e.g., 36" />
             </div>
-            <div>
+
+            <div class="field">
               <label for="sleepEff">Sleep efficiency (%)</label>
-              <input id="sleepEff" type="number" min="0" max="100" step="0.1" placeholder="e.g., 86" required />
+              <input id="sleepEff" inputmode="decimal" placeholder="e.g., 86" />
             </div>
-            <div>
+
+            <div class="field">
               <label for="sbp">SBP (mmHg)</label>
-              <input id="sbp" type="number" min="60" max="260" step="1" placeholder="e.g., 128" required />
+              <input id="sbp" inputmode="decimal" placeholder="e.g., 122" />
             </div>
-            <div>
+
+            <div class="field">
               <label for="dbp">DBP (mmHg)</label>
-              <input id="dbp" type="number" min="30" max="160" step="1" placeholder="e.g., 78" required />
+              <input id="dbp" inputmode="decimal" placeholder="e.g., 78" />
             </div>
-            <div>
+
+            <div class="field">
               <label for="tir">CGM Time-in-Range 70–180 (%)</label>
-              <input id="tir" type="number" min="0" max="100" step="0.1" placeholder="e.g., 78" required />
+              <input id="tir" inputmode="decimal" placeholder="e.g., 78" />
             </div>
-            <div>
+
+            <div class="field">
               <label for="crp">hs-CRP (mg/L)</label>
-              <input id="crp" type="number" min="0" step="0.1" placeholder="e.g., 1.2" required />
+              <input id="crp" inputmode="decimal" placeholder="e.g., 1.2" />
             </div>
-            <div>
-              <label>Exercise Focus</label>
-              <div class="radio-row">
+
+            <fieldset class="field">
+              <legend>Exercise Focus</legend>
+              <div class="choice-row">
                 <label><input type="radio" name="focus" value="muscle" checked> Muscle</label>
                 <label><input type="radio" name="focus" value="aerobic"> Aerobic</label>
                 <label><input type="radio" name="focus" value="both"> Both</label>
               </div>
+            </fieldset>
+
+            <div class="buttons">
+              <button id="btn-generate" class="btn primary" type="button">Generate Today’s Plan</button>
+              <button id="btn-clear" class="btn" type="button">Clear Form</button>
+              <button id="btn-save" class="btn" type="button">Save Today</button>
             </div>
-            <div class="button-row">
-              <button type="submit" class="btn primary">Generate Today’s Plan</button>
-              <button id="clearMetrics" type="button" class="btn">Clear Form</button>
-              <button id="saveMetrics" type="button" class="btn">Save Today</button>
-            </div>
-            <p id="saveMsg" class="save-msg" hidden>Saved. Check the <strong>Progress</strong> tab.</p>
           </form>
         </div>
 
         <div class="card">
           <h2>Today’s Plan</h2>
-          <div id="planDeterministic" class="prose"></div>
-          <div id="planAI" class="ai-block" hidden>
-            <h3>AI Coaching Insights</h3>
-            <div id="planAIText" class="prose"></div>
-          </div>
+          <div id="plan-output" class="plan-output"></div>
         </div>
-      </div>
 
-      <div class="card">
-        <h2>Progress (HRV Δ% over time)</h2>
-        <canvas id="progressChart" height="110"></canvas>
+        <div class="card fullwidth">
+          <h2>Progress (HRV Δ% over time)</h2>
+          <canvas id="hrvChart" height="120"></canvas>
+        </div>
       </div>
     </section>
 
     <!-- LIBRARY -->
-    <section id="library" class="view">
-      <div class="filters card">
-        <div class="filters-row">
-          <details open>
-            <summary>Goals</summary>
-            <div id="goalChips" class="chips"></div>
-          </details>
-          <details open>
-            <summary>Exercise Types</summary>
-            <div id="typeChips" class="chips"></div>
-          </details>
-          <details>
-            <summary>Practical constraints</summary>
-            <div class="constraints">
-              <div>
-                <strong>Time available</strong>
-                <div class="radio-row" id="timeRadios"></div>
-                <p id="timeNotice" class="notice"></p>
-              </div>
-              <div>
-                <strong>Equipment</strong>
-                <div id="equipChips" class="chips"></div>
-              </div>
-            </div>
-          </details>
+    <section id="tab-library" class="tabpanel" role="tabpanel">
+      <div class="card">
+        <div class="library-header">
+          <h2>Library</h2>
+          <div class="library-actions">
+            <button id="btn-clear-filters" class="btn">Clear Fields</button>
+          </div>
         </div>
-        <div class="filters-actions">
-          <button id="clearLibrary" class="btn">Clear Fields</button>
-        </div>
+        <div id="library-filters" class="library-filters"></div>
+        <div id="library-grid" class="library-grid"></div>
       </div>
-
-      <div id="libraryList" class="cards"></div>
     </section>
 
     <!-- PROGRESS -->
-    <section id="progress" class="view">
+    <section id="tab-progress" class="tabpanel" role="tabpanel">
       <div class="card">
-        <h2>Saved Metric Entries</h2>
-        <table id="daysTable" class="table"></table>
+        <h2>History</h2>
+        <div id="history-table"></div>
       </div>
     </section>
 
     <!-- ASK -->
-    <section id="ask" class="view">
+    <section id="tab-ask" class="tabpanel" role="tabpanel">
       <div class="card">
         <h2>Ask the Coach</h2>
-        <p class="help">Works independently of Plan. Answer includes deterministic suggestions plus an AI addendum.</p>
+        <p class="muted">
+          This works without Plan data. Your answer includes deterministic suggestions from the CSV + an AI addendum.
+        </p>
         <div class="ask-row">
-          <input id="askInput" type="text" placeholder="e.g., Short, joint-friendly session for cognition and balance" />
-          <button id="askBtn" class="btn primary">Ask</button>
+          <input id="ask-input" class="ask-input" placeholder="e.g., Short, joint-friendly session" />
+          <button id="ask-btn" class="btn primary" type="button">Ask</button>
         </div>
-        <div id="askOutDet" class="prose"></div>
-        <div id="askOutAI" class="ai-block" hidden>
-          <h3>AI Coaching Insights</h3>
-          <div id="askOutAIText" class="prose"></div>
-        </div>
+        <div id="ask-output" class="ask-output"></div>
       </div>
     </section>
 
-    <!-- DATA (hidden unless ?admin=1 or #admin) -->
-    <section id="data" class="view" hidden>
+    <!-- DATA -->
+    <section id="tab-data" class="tabpanel" role="tabpanel">
       <div class="card">
         <h2>CSV Diagnostics</h2>
-        <div class="diag-wrap">
-          <div>
-            <h3>Detected Columns</h3>
-            <pre id="csvDiag" class="diag"></pre>
-          </div>
-          <div class="csv-preview">
-            <h3>CSV Preview (first 50 rows)</h3>
-            <table id="csvTable" class="table"></table>
-          </div>
-        </div>
+        <div id="csv-diagnostics"></div>
       </div>
     </section>
-  </main>
 
-  <footer class="app-footer">
-    <small>© BrainPreserve.</small>
-  </footer>
+    <footer class="footer muted">
+      © BrainPreserve. CSV-first logic; AI addenda are clearly labeled.
+    </footer>
+  </main>
 </body>
 </html>
