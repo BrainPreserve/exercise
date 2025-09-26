@@ -1,318 +1,443 @@
-/* Brain Exercise App — stable tabs + clean AI fallback + sensible HRV delta
-   - Tabs always toggle (CSS + JS)
-   - AI addendum is shown ONLY if available (no "unavailable" message)
-   - HRV Δ% is shown only when meaningful (|Δ| >= 0.1%)
-   - Uses only real columns from master.csv; never invents categories
-   - Parses CSV without Web Workers to avoid CSP-related hangs
+/* Brain Exercise App — CSV-first with automatic AI addenda
+   Folder layout preserved:
+   - /assets/app.js (this file)
+   - /assets/styles.css
+   - /data/master.csv
+   - /netlify/functions/coach.js  (reachable at /api/coach)
 */
-(function () {
-  "use strict";
 
-  const $  = (s, r=document) => r.querySelector(s);
-  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
-  const on = (el, ev, fn) => el && el.addEventListener(ev, fn);
-  const toNum = (v) => { const n = Number(String(v ?? "").replace(/[^0-9.\-]/g,"")); return Number.isFinite(n)? n : null; };
+(() => {
+  // ---------- Utilities ----------
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+  const byId = (id) => document.getElementById(id);
+  const banner = byId("error-banner");
+  const showError = (msg) => {
+    banner.textContent = msg;
+    banner.hidden = false;
+  };
+  const hideError = () => { banner.hidden = true; banner.textContent = ""; };
 
-  const LKEY = "bp_exercise_entries_v7";
-  const state = { csv: { headers: [], rows: [] }, chart: null };
+  const parseNum = (v) => {
+    if (v === null || v === undefined) return null;
+    const z = String(v).replace(/[^0-9.\-]/g, "");
+    if (!z) return null;
+    const n = Number(z);
+    return Number.isFinite(n) ? n : null;
+  };
 
-  // ---------- Boot ----------
-  on(window, "DOMContentLoaded", () => {
-    bindTabs();
-    // load CSV first (no worker to avoid CSP issues)
-    loadCSV("data/master.csv")
-      .then(({headers, rows}) => { state.csv = { headers, rows }; })
-      .catch((err) => { showError("CSV load/parse issue: " + err.message); })
-      .finally(() => {
-        // App is usable even if CSV failed (no hallucination—CSV features just show nothing)
-        bindPlan(); bindAsk(); renderLibrary(); renderHistory(); initChart(); renderDiagnostics();
+  const todayKey = () => new Date().toISOString().slice(0,10);
+  const store = {
+    getHistory() { return JSON.parse(localStorage.getItem("bp_ex_hist") || "[]"); },
+    setHistory(arr) { localStorage.setItem("bp_ex_hist", JSON.stringify(arr)); },
+    append(record) {
+      const all = store.getHistory();
+      all.push(record); store.setHistory(all);
+    }
+  };
+
+  // ---------- CSV load ----------
+  const CSV_URL = "data/master.csv";
+  let RAW = [];        // raw rows from CSV
+  let PROTOCOLS = [];  // normalized rows
+  let GOAL_COLUMNS = []; // discovered goals from CSV present headers
+
+  function discoverGoals(headers) {
+    // Only show filters for headers that actually exist.
+    const candidates = [
+      "cv_fitness","body_composition","lipids","glycemic_control",
+      "blood_pressure","muscle_mass","goal_label"
+    ];
+    return candidates.filter(h => headers.includes(h));
+  }
+
+  function normalizeRow(row) {
+    // Be conservative: do not invent fields; read what exists.
+    // Common patterns supported: title/name, type/exercise_type, coach_script_non_api, goal fields.
+    const title = (row.title || row.name || row.protocol || "").trim();
+    const typeRaw = (row.type || row.exercise_type || "").toLowerCase().trim();
+    const type = typeRaw.includes("aero") ? "aerobic"
+               : typeRaw.includes("cardio") ? "aerobic"
+               : typeRaw.includes("muscle") ? "muscular"
+               : typeRaw.includes("resistance") ? "muscular"
+               : typeRaw || ""; // leave as-is if unseen
+
+    // Deterministic coaching text, if present in CSV.
+    const nonApi = (row.coach_script_non_api || row.deterministic || row.coach || "").trim();
+
+    // Build a lightweight goals object using only present columns.
+    const goals = {};
+    GOAL_COLUMNS.forEach(h => {
+      const v = (row[h] ?? "").toString().trim().toLowerCase();
+      goals[h] = v === "1" || v === "true" || v === "yes" || v === "y" || (h === "goal_label" && v);
+    });
+
+    return { title, type, nonApi, goals, raw: row };
+  }
+
+  function loadCSV() {
+    return new Promise((resolve, reject) => {
+      Papa.parse(CSV_URL, {
+        download: true, header: true, dynamicTyping: false, skipEmptyLines: true,
+        complete: (res) => {
+          try {
+            const rows = res.data || [];
+            const headers = res.meta?.fields || [];
+            RAW = rows;
+            GOAL_COLUMNS = discoverGoals(headers);
+
+            PROTOCOLS = rows
+              .map(normalizeRow)
+              .filter(p => p.title); // require a title
+
+            renderDiagnostics(headers);
+            renderLibraryFilters();
+            renderLibrary(PROTOCOLS);
+            resolve();
+          } catch (e) { reject(e); }
+        },
+        error: (err) => reject(err)
       });
-  });
+    });
+  }
 
   // ---------- Tabs ----------
-  function bindTabs(){
-    $$(".tab").forEach(btn=>{
-      on(btn,"click",()=>{
-        const name = btn.dataset.tab;
-        $$(".tab").forEach(t=>t.classList.toggle("active", t===btn));
-        $$(".tabpanel").forEach(p=>p.classList.toggle("active", p.id === `tab-${name}`));
+  function initTabs() {
+    const tabs = $$(".tab");
+    const panels = $$(".tabpanel");
+    tabs.forEach(btn => {
+      btn.addEventListener("click", () => {
+        tabs.forEach(b => b.classList.remove("active"));
+        panels.forEach(p => p.classList.remove("active"));
+        btn.classList.add("active");
+        byId(`tab-${btn.dataset.tab}`).classList.add("active");
       });
     });
   }
 
-  // ---------- CSV (no Worker, no hang) ----------
-  async function loadCSV(url){
-    if (!window.Papa) throw new Error("CSV engine missing");
-    const r1 = await tryParse(url);
-    if (r1) return r1;
-    const bust = url + (url.includes("?") ? "&" : "?") + "v=" + Date.now();
-    const r2 = await tryParse(bust);
-    if (r2) return r2;
-    throw new Error("Could not parse CSV (check header row and commas)");
+  // ---------- PLAN ----------
+  function hrvDeltaPct(baseline, today) {
+    if (baseline == null || today == null || baseline <= 0) return null;
+    return Math.round(((today - baseline) / baseline) * 100);
+    // sign: negative = below baseline
   }
 
-  async function tryParse(url){
-    try{
-      const resp = await fetch(url, { cache: "no-store" });
-      if (!resp.ok) return null;
-      const text = await resp.text();
-      const res = Papa.parse(text, { header: true, skipEmptyLines: true, worker: false });
-      const rows = Array.isArray(res?.data) ? res.data : [];
-      const headers = res?.meta?.fields || Object.keys(rows[0] || {});
-      if (!headers.length || !rows.length) return null;
-      return { headers, rows };
-    }catch{ return null; }
+  function planDeterministicText(inputs) {
+    const { baseline, today, sleep, sbp, dbp, tir, crp, focus } = inputs;
+    const delta = hrvDeltaPct(baseline, today);
+    const redFlags = [];
+
+    if (delta !== null && delta <= -7) redFlags.push(`HRV ↓ ${delta}% vs baseline`);
+    if (parseNum(sleep) !== null && sleep < 85) redFlags.push(`sleep efficiency ${sleep}%`);
+    if (parseNum(sbp) !== null && parseNum(dbp) !== null && (sbp >= 140 || dbp >= 90)) redFlags.push(`elevated BP (${sbp}/${dbp})`);
+    if (parseNum(tir) !== null && tir < 70) redFlags.push(`CGM TIR ${tir}% (<70% target)`);
+    if (parseNum(crp) !== null && crp >= 3) redFlags.push(`hs-CRP ${crp} mg/L`);
+
+    const ease = redFlags.length ? "Reduce intensity/volume; extend warm-up; prioritize technique and nasal breathing." :
+                                   "Proceed at planned load; quality over quantity.";
+
+    const focusText = focus === "muscle" ? "Resistance / muscle-strength focus"
+                      : focus === "aerobic" ? "Aerobic conditioning focus"
+                      : "Concurrent: resistance + aerobic";
+
+    const header = `• Focus: ${focusText}\n• Status: ${redFlags.length ? "Caution" : "Green"}${redFlags.length ? " — " + redFlags.join("; ") : ""}`;
+
+    const prescription =
+      focus === "muscle"
+        ? "Session: 4–6 exercises, 2–4 sets, RPE 6–7 (leave 2–3 reps in reserve). Finish with 5–10 min zone-2 cooldown."
+        : focus === "aerobic"
+        ? "Session: 30–45 min zone-2; optional 4–6 × 30–60 s strides at RPE 7 with full recovery if feeling fresh."
+        : "Session: 25–30 min zone-2 + 2–3 compound lifts 2–3 sets each at RPE 6–7.";
+
+    return `${header}\n\n${prescription}\n\nIf HRV low or sleep poor, ${ease}`;
   }
 
-  // ---------- Error banner ----------
-  function showError(msg){ const b = $("#error-banner"); if (b){ b.hidden = false; b.textContent = msg; } }
-
-  // ---------- Helpers ----------
-  function colAnyOf(...cand){
-    for (const c of cand){
-      const h = state.csv.headers.find(x => (x||"").toLowerCase() === c.toLowerCase());
-      if (h) return h;
+  async function planAIAddendum(inputs, deterministicText) {
+    // Calls your Netlify function at /api/coach (coach.js in /netlify/functions/)
+    // If the function is absent or fails, we fail gracefully.
+    try {
+      const body = {
+        mode: "plan",
+        metrics: inputs,
+        deterministic: deterministicText
+      };
+      const res = await fetch("/api/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) throw new Error(`API ${res.status}`);
+      const data = await res.json();
+      const text = (data && (data.text || data.answer || data.output)) || "";
+      return text.trim();
+    } catch {
+      return ""; // silent fail; deterministic text still shows
     }
-    return null;
-  }
-  function escapeHtml(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
-  function n(v){ return v==null? "": String(v); }
-
-  // ---------- Plan ----------
-  function bindPlan(){
-    on($("#plan-form"), "submit", (e)=> e.preventDefault());
-    on($("#btn-generate"), "click", generatePlan);
-    on($("#btn-clear"),    "click", clearPlanForm);
-    on($("#btn-save"),     "click", saveToday);
   }
 
-  function getPlanInputs(){
-    const focus = ($$('input[name="focus"]:checked')[0]?.value) || "muscle";
-    const hrvBaseline = toNum($("#hrvBaseline")?.value);
-    const hrvToday    = toNum($("#hrvToday")?.value);
-    const deltaPct = (hrvBaseline && hrvToday) ? ((hrvToday - hrvBaseline)/hrvBaseline)*100 : null;
+  function captureInputs() {
+    const focus = ($$("input[name='focus']:checked")[0] || {}).value || "muscle";
     return {
-      focus,
-      hrvBaseline, hrvToday, deltaPct,
-      sleepEff: toNum($("#sleepEff")?.value),
-      sbp: toNum($("#sbp")?.value),
-      dbp: toNum($("#dbp")?.value),
-      tir: toNum($("#tir")?.value),
-      crp: toNum($("#crp")?.value),
+      baseline: parseNum(byId("hrvBaseline").value),
+      today: parseNum(byId("hrvToday").value),
+      sleep: parseNum(byId("sleepEff").value),
+      sbp: parseNum(byId("sbp").value),
+      dbp: parseNum(byId("dbp").value),
+      tir: parseNum(byId("tir").value),
+      crp: parseNum(byId("crp").value),
+      focus
     };
   }
 
-  function generatePlan(){
-    const o = $("#plan-output"); if (!o) return;
-    const v = getPlanInputs();
-    const lines = [];
+  async function onGeneratePlan() {
+    hideError();
+    const inputs = captureInputs();
+    const det = planDeterministicText(inputs);
+    const ai = await planAIAddendum(inputs, det);
 
-    lines.push(`• Focus: ${v.focus.toUpperCase()}`);
+    const out = byId("plan-output");
+    out.innerHTML =
+      `### Non-API (Deterministic)\n${det}\n\n` +
+      (ai ? `### GPT-like API Addendum\n${ai}` : `### GPT-like API Addendum\n(no API addendum available)`);
 
-    // Show HRV Δ% only when meaningful (abs change >= 0.1%)
-    if (v.deltaPct != null && Math.abs(v.deltaPct) >= 0.1){
-      lines.push(`• HRV Δ%: ${v.deltaPct.toFixed(1)}% (${v.hrvToday ?? "?"} vs ${v.hrvBaseline ?? "?"} ms)`);
-      if (v.deltaPct < -10) lines.push("  → Lower intensity/volume; joint-friendly emphasis.");
-      else if (v.deltaPct > 5) lines.push("  → You can emphasize performance or volume.");
-    }
+    out.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 
-    if (v.sleepEff != null){ lines.push(`• Sleep efficiency: ${v.sleepEff}%`); if (v.sleepEff < 80) lines.push("  → Keep today sub-maximal; extend warm-up."); }
-    if (v.sbp != null && v.dbp != null){ lines.push(`• BP: ${v.sbp}/${v.dbp} mmHg`); if (v.sbp>=160 || v.dbp>=90) lines.push("  → Avoid Valsalva; longer rest; stop if symptomatic."); }
-    if (v.tir != null){ lines.push(`• CGM TIR 70–180: ${v.tir}%`); if (v.tir < 70) lines.push("  → Prefer steady, low-to-moderate intensity."); }
-    if (v.crp != null){ lines.push(`• hs-CRP: ${v.crp} mg/L`); if (v.crp >= 3) lines.push("  → Favor recovery; cap intensity and volume."); }
+  function onClearForm() {
+    ["hrvBaseline","hrvToday","sleepEff","sbp","dbp","tir","crp"].forEach(id => byId(id).value = "");
+    byId("plan-output").textContent = "";
+  }
 
-    // CSV-derived suggestions (only real columns; nothing invented)
-    const rows = state.csv.rows || [];
-    const titleCol = colAnyOf("Exercise Type","title","name","protocol","exercise");
-    const coachCol = colAnyOf("coach_script_non_api","coach_script","coach_notes");
-    const typeCol  = colAnyOf("type","category","modality");
-    const muscleCol = colAnyOf("Muscle Mass/Gain Muscle","muscle_mass","muscle");
-
-    const aerobicMatch = (r) => {
-      const t = (typeCol ? String(r[typeCol]) : "").toLowerCase();
-      return /\baerobic|cardio|endurance|zone|walk|bike|row|run\b/.test(t);
+  function onSaveToday() {
+    const inputs = captureInputs();
+    const delta = hrvDeltaPct(inputs.baseline, inputs.today);
+    const record = {
+      date: todayKey(),
+      hrv_delta_pct: delta,
+      sleep: inputs.sleep,
+      sbp: inputs.sbp,
+      dbp: inputs.dbp,
+      tir: inputs.tir,
+      crp: inputs.crp,
+      focus: inputs.focus
     };
+    store.append(record);
+    renderHistory();
+    renderHRVChart();
+  }
 
-    const picks = [];
-    for (const r of rows){
-      if ((v.focus === "muscle" || v.focus === "both") && muscleCol && String(r[muscleCol]).trim() === "1") picks.push(r);
-      if ((v.focus === "aerobic" || v.focus === "both") && typeCol && aerobicMatch(r)) picks.push(r);
-    }
-    const uniq = Array.from(new Set(picks));
-    lines.push("", "Suggested protocols from CSV:");
-    if (!uniq.length){ lines.push("• No focus-matched items found in CSV."); }
-    else {
-      uniq.slice(0,6).forEach(r=>{
-        const t = titleCol ? String(r[titleCol]) : "(untitled)";
-        lines.push(`• ${t}`);
-        if (coachCol && r[coachCol]) lines.push(`   – ${String(r[coachCol])}`);
-      });
-    }
+  function initPlan() {
+    byId("btn-generate").addEventListener("click", onGeneratePlan);
+    byId("btn-clear").addEventListener("click", onClearForm);
+    byId("btn-save").addEventListener("click", onSaveToday);
+  }
 
-    // Do NOT print “AI unavailable”. Only add an addendum when we have it.
-    o.textContent = lines.join("\n");
+  // ---------- LIBRARY ----------
+  function renderLibraryFilters() {
+    const wrap = byId("library-filters");
+    wrap.innerHTML = "";
 
-    try{
-      fetch("/api/coach",{
-        method:"POST",
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({mode:"plan_addendum", metrics:v, focus:v.focus})
-      })
-      .then(r=> r.ok? r.json() : Promise.reject())
-      .then(j=>{
-        if (j && j.text){
-          o.textContent = o.textContent + "\n\n— AI Addendum —\n" + j.text;
+    // Type chips
+    const types = ["aerobic","muscular"];
+    types.forEach(t => {
+      const chip = document.createElement("button");
+      chip.className = "filter-chip"; chip.dataset.type = t;
+      chip.textContent = t[0].toUpperCase() + t.slice(1);
+      chip.addEventListener("click", () => { chip.classList.toggle("active"); applyLibraryFilters(); });
+      wrap.appendChild(chip);
+    });
+
+    // Goal checkboxes – only for headers that truly exist
+    GOAL_COLUMNS.forEach(h => {
+      const chip = document.createElement("button");
+      chip.className = "filter-chip"; chip.dataset.goal = h;
+      chip.textContent = h.replace(/_/g," ").replace(/\b\w/g, s => s.toUpperCase());
+      chip.addEventListener("click", () => { chip.classList.toggle("active"); applyLibraryFilters(); });
+      wrap.appendChild(chip);
+    });
+
+    byId("btn-clear-filters").onclick = () => {
+      $$(".filter-chip", wrap).forEach(c => c.classList.remove("active"));
+      applyLibraryFilters();
+    };
+  }
+
+  function applyLibraryFilters() {
+    const activeTypes = $$(".filter-chip[data-type].active").map(c => c.dataset.type);
+    const activeGoals = $$(".filter-chip[data-goal].active").map(c => c.dataset.goal);
+
+    const filtered = PROTOCOLS.filter(p => {
+      const typeOk = !activeTypes.length || activeTypes.includes(p.type);
+      const goalsOk = !activeGoals.length || activeGoals.every(g => {
+        // goal_label may be a string; others are boolean flags
+        if (g === "goal_label") {
+          const gl = (p.raw.goal_label || "").toString().toLowerCase();
+          return gl.length > 0;
         }
-      })
-      .catch(()=>{}); // silent if unavailable
-    }catch{}
-  }
-
-  function clearPlanForm(){
-    ["hrvBaseline","hrvToday","sleepEff","sbp","dbp","tir","crp"].forEach(id=>{ const el = $("#"+id); if (el) el.value=""; });
-    const o = $("#plan-output"); if (o) o.textContent = "";
-  }
-
-  function saveToday(){
-    const v = getPlanInputs();
-    const entry = { ts: Date.now(), date: new Date().toISOString().slice(0,10), ...v };
-    const arr = getEntries(); arr.push(entry);
-    localStorage.setItem(LKEY, JSON.stringify(arr));
-    renderHistory(); updateChart();
-  }
-
-  function getEntries(){
-    try { const raw = localStorage.getItem(LKEY); const arr = raw? JSON.parse(raw): []; return Array.isArray(arr)? arr: []; }
-    catch { return []; }
-  }
-
-  // ---------- Library ----------
-  function renderLibrary(){
-    const grid = $("#library-grid"); const filters = $("#library-filters");
-    if (!grid || !filters) return;
-    grid.innerHTML = ""; filters.innerHTML = "";
-
-    const rows = state.csv.rows || [];
-    if (!rows.length){ grid.innerHTML = `<div class="muted">No CSV rows found.</div>`; return; }
-
-    const titleCol = colAnyOf("Exercise Type","title","name","protocol","exercise");
-    const typeCol  = colAnyOf("type","category","modality");
-    const coachCol = colAnyOf("coach_script_non_api","coach_script","coach_notes");
-
-    if (typeCol){
-      const vals = Array.from(new Set(rows.map(r=> String(r[typeCol]).trim()).filter(Boolean))).sort();
-      vals.slice(0,12).forEach(val=>{
-        const chip = document.createElement("button");
-        chip.className = "filter-chip"; chip.textContent = val; chip.dataset.val = val;
-        chip.onclick = () => { $$(".filter-chip").forEach(c=>c.classList.remove("active")); chip.classList.add("active"); draw(val); };
-        filters.appendChild(chip);
+        return !!p.goals[g];
       });
-      $("#btn-clear-filters")?.addEventListener("click", () => { $$(".filter-chip").forEach(c=>c.classList.remove("active")); draw(null); });
-    }
-
-    function draw(activeVal){
-      grid.innerHTML = "";
-      const list = !activeVal? rows : rows.filter(r=> String(r[typeCol]).trim() === activeVal);
-      if (!list.length){ grid.innerHTML = `<div class="muted">No protocols to display.</div>`; return; }
-      for (const r of list){
-        const card = document.createElement("div"); card.className = "protocol";
-        const title = titleCol ? String(r[titleCol]) : "(untitled)";
-        const type  = typeCol ? ` <span class="muted">(${r[typeCol]})</span>` : "";
-        const coach = coachCol? String(r[coachCol]||"") : "";
-        card.innerHTML = `<h3>${escapeHtml(title)}${type}</h3>${coach? `<div class="muted">${escapeHtml(coach)}</div>`:""}`;
-        grid.appendChild(card);
-      }
-    }
-    draw(null);
-  }
-
-  // ---------- Ask (no noisy fallback) ----------
-  function bindAsk(){
-    const btn = $("#ask-btn");
-    on(btn,"click", ()=>{
-      const out = $("#ask-output"); const inp = $("#ask-input"); if (!out) return;
-      const q = String(inp?.value || "").trim();
-      const lines = [];
-
-      try {
-        const titleCol = colAnyOf("Exercise Type","title","name","protocol","exercise");
-        const coachCol = colAnyOf("coach_script_non_api","coach_script","coach_notes");
-        const rows = state.csv.rows || [];
-        const matches = q ? rows.filter(r=>{
-          const hay = ((titleCol? String(r[titleCol]).toLowerCase()+" ":"") + (coachCol? String(r[coachCol]).toLowerCase():""));
-          return hay.includes(q.toLowerCase());
-        }) : rows.slice(0,5);
-        lines.push("Deterministic suggestions (from CSV):");
-        if (!matches.length) lines.push("• No CSV suggestions.");
-        matches.slice(0,6).forEach(r=>{
-          const t = titleCol? String(r[titleCol]) : "(untitled)";
-          lines.push(`• ${t}`); if (coachCol && r[coachCol]) lines.push(`   – ${String(r[coachCol])}`);
-        });
-      } catch { lines.push("Deterministic suggestions unavailable."); }
-
-      out.textContent = lines.join("\n");
-
-      try{
-        fetch("/api/coach",{
-          method:"POST",headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({mode:"ask_addendum", query:q})
-        })
-        .then(r=> r.ok? r.json(): Promise.reject())
-        .then(j=>{
-          if (j && j.text){
-            out.textContent = out.textContent + "\n\n— AI Addendum —\n" + j.text;
-          }
-        })
-        .catch(()=>{});
-      }catch{}
+      return typeOk && goalsOk;
     });
+
+    renderLibrary(filtered);
   }
 
-  // ---------- Progress ----------
-  function renderHistory(){
-    const host = $("#history-table"); if (!host) return;
-    const entries = getEntries().sort((a,b)=>a.ts-b.ts);
-    if (!entries.length){ host.innerHTML = `<div class="muted">No saved entries yet.</div>`; return; }
-    const rows = entries.map(e=>`<tr>
-      <td>${new Date(e.ts).toLocaleString()}</td>
-      <td>${n(e.hrvBaseline)}</td><td>${n(e.hrvToday)}</td>
-      <td>${e.deltaPct!=null? e.deltaPct.toFixed(1)+'%':''}</td>
-      <td>${n(e.sleepEff)}</td><td>${n(e.sbp)}/${n(e.dbp)}</td>
-      <td>${n(e.tir)}</td><td>${n(e.crp)}</td><td>${e.focus}</td>
-    </tr>`).join("");
-    host.innerHTML = `<table>
-      <thead><tr>
-        <th>Saved at</th><th>HRV base</th><th>HRV</th><th>HRV Δ%</th>
-        <th>Sleep %</th><th>BP</th><th>TIR %</th><th>CRP</th><th>Focus</th>
-      </tr></thead><tbody>${rows}</tbody></table>`;
+  async function buildAIAddendumForProtocol(p) {
+    try {
+      const body = { mode: "protocol", protocol: { title: p.title, type: p.type, goals: p.goals, raw: p.raw } };
+      const res = await fetch("/api/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) throw new Error("API error");
+      const data = await res.json();
+      return (data.text || data.answer || "").trim();
+    } catch {
+      return "";
+    }
   }
 
-  function initChart(){
-    const ctx = $("#hrvChart"); if (!ctx || !window.Chart) return;
-    state.chart = new Chart(ctx, {
-      type: "line",
-      data: { labels: [], datasets: [{ label:"HRV Δ% (saved)", data: [] }] },
-      options: { responsive:true, maintainAspectRatio:false, scales:{y:{ticks:{callback:v=>v+"%"}}}, elements:{point:{radius:3}} }
-    });
-    updateChart();
-  }
-  function updateChart(){
-    if (!state.chart) return;
-    const entries = getEntries().sort((a,b)=>a.ts-b.ts);
-    state.chart.data.labels = entries.map(e=> new Date(e.ts).toLocaleString());
-    state.chart.data.datasets[0].data = entries.map(e=> e.deltaPct!=null ? Number(e.deltaPct.toFixed(1)) : null);
-    state.chart.update();
-  }
+  function protocolCardHTML(p, aiText) {
+    const typeLabel = p.type ? ` (${p.type})` : "";
+    const nonApi = p.nonApi || `Today: complete planned session at RPE 6–7. If HRV low or sleep poor, reduce intensity/volume.`;
+    const aiBlock = aiText ? aiText : "(no API addendum available)";
 
-  // ---------- Diagnostics ----------
-  function renderDiagnostics(){
-    const host = $("#csv-diagnostics"); if (!host) return;
-    const { headers, rows } = state.csv;
-    const sample = rows.slice(0, 3);
-    host.innerHTML = `
-      <div><strong>Detected columns (${headers.length}):</strong> ${headers.join(", ")}</div>
-      <div style="margin-top:8px" class="muted">First ${sample.length} rows (truncated):</div>
-      <pre>${escapeHtml(JSON.stringify(sample, null, 2))}</pre>
+    return `
+      <div class="protocol">
+        <h3>${p.title}${typeLabel}</h3>
+        <div class="muted" style="margin-bottom:8px">
+          ${GOAL_COLUMNS.length ? "Goals: " + GOAL_COLUMNS.filter(h => (h==="goal_label" ? (p.raw.goal_label||"") : p.goals[h])).map(h => h.replace(/_/g," ")).join(", ") : ""}
+        </div>
+        <div><strong>Non-API (Deterministic)</strong><br>${nonApi}</div>
+        <div style="margin-top:8px"><strong>GPT-like API Addendum</strong><br>${aiBlock}</div>
+      </div>
     `;
   }
+
+  async function renderLibrary(list) {
+    const grid = byId("library-grid");
+    grid.innerHTML = "";
+
+    // Create cards and fetch AI addenda in parallel to satisfy “every coaching output includes both…”
+    const promises = list.map(async (p) => {
+      const card = document.createElement("div");
+      card.innerHTML = protocolCardHTML(p, ""); // temp without AI
+      grid.appendChild(card.firstElementChild);
+
+      const ai = await buildAIAddendumForProtocol(p);
+      // Replace last card’s HTML with AI included
+      const last = grid.lastElementChild;
+      if (last) last.outerHTML = protocolCardHTML(p, ai);
+    });
+
+    await Promise.allSettled(promises);
+  }
+
+  // ---------- ASK ----------
+  function keywordScore(q, p) {
+    const s = (p.title + " " + p.type + " " + (p.raw.goal_label || "")).toLowerCase();
+    const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+    return terms.reduce((acc,t) => acc + (s.includes(t) ? 1 : 0), 0);
+  }
+
+  async function onAsk() {
+    hideError();
+    const q = byId("ask-input").value.trim();
+    if (!q) { byId("ask-output").textContent = "Please enter a question."; return; }
+
+    // Deterministic: pick top 3 protocol matches by keyword score (no guessing about columns).
+    const ranked = PROTOCOLS
+      .map(p => ({ p, score: keywordScore(q,p) }))
+      .filter(x => x.score > 0)
+      .sort((a,b) => b.score - a.score)
+      .slice(0,3)
+      .map(x => x.p);
+
+    const detBlocks = ranked.map(p => {
+      const nonApi = p.nonApi || `Suggested: ${p.title} (${p.type||"session"}), RPE 6–7; scale based on HRV/sleep.`;
+      return `• ${p.title}${p.type ? " ("+p.type+")" : ""}\n  ${nonApi}`;
+    });
+
+    // AI addendum
+    let ai = "";
+    try {
+      const res = await fetch("/api/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "ask", question: q, context_count: ranked.length, context: ranked.map(p => ({title:p.title,type:p.type,raw:p.raw})) })
+      });
+      if (res.ok) { const data = await res.json(); ai = (data.text || data.answer || "").trim(); }
+    } catch { /* ignore */ }
+
+    byId("ask-output").textContent =
+      `Non-API (Deterministic)\n${detBlocks.length ? detBlocks.join("\n\n") : "• No CSV suggestions."}\n\n` +
+      `GPT-like API Addendum\n${ai || "(no API addendum available)"}`;
+  }
+
+  function initAsk() {
+    byId("ask-btn").addEventListener("click", onAsk);
+  }
+
+  // ---------- PROGRESS ----------
+  let chart; // ChartJS instance
+
+  function renderHistory() {
+    const rows = store.getHistory().slice().reverse();
+    const host = byId("history-table");
+    if (!rows.length) { host.innerHTML = "<p class='muted'>No saved days yet.</p>"; return; }
+
+    const headers = ["Date","HRV Δ%","Sleep %","SBP","DBP","TIR %","hs-CRP","Focus"];
+    const html = [
+      "<table><thead><tr>",
+      ...headers.map(h => `<th>${h}</th>`),
+      "</tr></thead><tbody>",
+      ...rows.map(r => `<tr>
+        <td>${r.date}</td><td>${r.hrv_delta_pct ?? ""}</td>
+        <td>${r.sleep ?? ""}</td><td>${r.sbp ?? ""}</td><td>${r.dbp ?? ""}</td>
+        <td>${r.tir ?? ""}</td><td>${r.crp ?? ""}</td><td>${r.focus ?? ""}</td>
+      </tr>`),
+      "</tbody></table>"
+    ].join("");
+    host.innerHTML = html;
+  }
+
+  function renderHRVChart() {
+    const rows = store.getHistory();
+    const labels = rows.map(r => r.date);
+    const data = rows.map(r => r.hrv_delta_pct);
+    const ctx = byId("hrvChart").getContext("2d");
+    if (chart) chart.destroy();
+    chart = new Chart(ctx, {
+      type: "line",
+      data: { labels, datasets: [{ label: "HRV Δ% vs baseline", data }] },
+      options: { responsive: true, maintainAspectRatio: false, scales: { y: { ticks: { callback: v => v + "%" }}}}
+    });
+  }
+
+  // ---------- DATA / DIAGNOSTICS ----------
+  function renderDiagnostics(headers) {
+    const host = byId("csv-diagnostics");
+    const lines = [
+      `Rows: ${RAW.length}`,
+      `Detected headers: ${headers.join(", ")}`,
+      `Goal columns used: ${GOAL_COLUMNS.join(", ") || "(none found)"}`
+    ];
+    host.textContent = lines.join("\n");
+  }
+
+  // ---------- Boot ----------
+  async function boot() {
+    try {
+      initTabs();
+      initPlan();
+      initAsk();
+      renderHistory();
+      renderHRVChart();
+      await loadCSV();
+    } catch (e) {
+      showError(`Load failed: ${e.message || e}`);
+    }
+  }
+  document.addEventListener("DOMContentLoaded", boot);
 })();
