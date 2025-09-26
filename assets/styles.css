@@ -6,7 +6,7 @@
   --radius:16px;
 }
 
-/* Base --------------------------------------------------------------------- */
+/* Base */
 *{box-sizing:border-box}
 html,body{
   margin:0; padding:0; background:var(--bg); color:var(--text);
@@ -16,7 +16,7 @@ html,body{
 h1,h2,h3{margin:0 0 .6rem}
 p{margin:.35rem 0}
 
-/* Header & Tabs ------------------------------------------------------------ */
+/* Header & Tabs */
 .app-header{
   padding:18px 16px; border-bottom:1px solid #1f2432;
   background:linear-gradient(180deg,#111520,#0f1115);
@@ -35,7 +35,7 @@ p{margin:.35rem 0}
 .grid-2{display:grid; grid-template-columns:1fr 1fr; gap:16px}
 @media (max-width:980px){.grid-2{grid-template-columns:1fr}}
 
-/* Cards & Layout ----------------------------------------------------------- */
+/* Cards & Layout */
 .card{
   background:var(--card); border:1px solid #1f2432; border-radius:var(--radius);
   padding:16px; box-shadow:var(--shadow);
@@ -51,7 +51,7 @@ p{margin:.35rem 0}
   background:var(--ai); border:1px solid #334059;
 }
 
-/* Forms -------------------------------------------------------------------- */
+/* Forms */
 .form-grid{display:grid; grid-template-columns:repeat(3,minmax(180px,1fr)); gap:12px}
 @media (max-width:900px){.form-grid{grid-template-columns:repeat(2,minmax(180px,1fr))}}
 @media (max-width:620px){.form-grid{grid-template-columns:1fr}}
@@ -64,7 +64,7 @@ p{margin:.35rem 0}
 .btn.primary{background:var(--primary); color:#07101a; border:none}
 .save-msg{margin-top:8px; color:var(--ok); font-weight:600}
 
-/* Chips & Filters ---------------------------------------------------------- */
+/* Chips & Filters */
 details>summary{cursor:pointer; margin-bottom:6px; font-weight:600}
 .filters{display:flex; flex-direction:column; gap:10px}
 .filters-row{display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px}
@@ -82,14 +82,14 @@ details>summary{cursor:pointer; margin-bottom:6px; font-weight:600}
 
 .notice{color:var(--muted); font-size:.92rem}
 
-/* Protocol cards ----------------------------------------------------------- */
+/* Protocol cards */
 .protocol-meta{display:flex; gap:8px; flex-wrap:wrap; margin:.45rem 0 .2rem}
 .badge{
   padding:4px 8px; border-radius:999px; background:#22304a;
   border:1px solid #2b3a58; color:#cfe0ff; font-size:.85rem
 }
 
-/* Tables & Diagnostics ----------------------------------------------------- */
+/* Tables & Diagnostics */
 .table{width:100%; border-collapse:collapse}
 .table th,.table td{border-bottom:1px solid #23293a; padding:8px 10px; text-align:left}
 .diag{white-space:pre-wrap; background:#0b0e14; border:1px solid #1c2332; padding:12px; border-radius:12px; max-height:360px; overflow:auto}
@@ -97,13 +97,13 @@ details>summary{cursor:pointer; margin-bottom:6px; font-weight:600}
 .csv-preview{overflow:auto}
 @media (max-width:1000px){.diag-wrap{grid-template-columns:1fr}}
 
-/* Ask UI ------------------------------------------------------------------- */
+/* Ask UI */
 .ask-row input{
-  flex:1; min-width:420px; max-width:900px;
+  flex:1; min-width:520px; max-width:1000px;
   background:#0e1220; color:var(--text);
   border:1px solid #2a3246; border-radius:10px; padding:10px 12px;
 }
 .ask-row input::placeholder{color:#8c95a8}
 
-/* Footer ------------------------------------------------------------------- */
+/* Footer */
 .app-footer{padding:20px 16px; border-top:1px solid #1f2432; color:var(--muted)}
