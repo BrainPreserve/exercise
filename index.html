@@ -18,6 +18,7 @@
       <button class="tab active" data-tab="plan">Plan</button>
       <button class="tab" data-tab="library">Library</button>
       <button class="tab" data-tab="progress">Progress</button>
+      <button class="tab" data-tab="ask">Ask</button>
       <button class="tab admin-only" data-tab="data" hidden>Data</button>
     </nav>
   </header>
@@ -128,8 +129,25 @@
     <!-- PROGRESS -->
     <section id="progress" class="view">
       <div class="card">
-        <h2>Saved Metric Days</h2>
+        <h2>Saved Metric Entries</h2>
         <table id="daysTable" class="table"></table>
+      </div>
+    </section>
+
+    <!-- ASK -->
+    <section id="ask" class="view">
+      <div class="card">
+        <h2>Ask the Coach</h2>
+        <p class="help">Works independently of Plan. Answer includes deterministic suggestions plus an AI addendum.</p>
+        <div class="ask-row">
+          <input id="askInput" type="text" placeholder="e.g., Short, joint-friendly session for cognition and balance" />
+          <button id="askBtn" class="btn primary">Ask</button>
+        </div>
+        <div id="askOutDet" class="prose"></div>
+        <div id="askOutAI" class="ai-block" hidden>
+          <h3>AI Coaching Insights</h3>
+          <div id="askOutAIText" class="prose"></div>
+        </div>
       </div>
     </section>
 
