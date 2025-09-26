@@ -1,7 +1,9 @@
-/* Brain Exercise App — CSV Hard-Gate (No Worker, No Freeze)
-   - Guarantees CSV loads first, but never hangs on CSP/worker issues
-   - Parses via fetch(text) + Papa.parse (worker:false)
-   - No guessing: uses only columns present in master.csv
+/* Brain Exercise App — stable tabs + clean AI fallback + sensible HRV delta
+   - Tabs always toggle (CSS + JS)
+   - AI addendum is shown ONLY if available (no "unavailable" message)
+   - HRV Δ% is shown only when meaningful (|Δ| >= 0.1%)
+   - Uses only real columns from master.csv; never invents categories
+   - Parses CSV without Web Workers to avoid CSP-related hangs
 */
 (function () {
   "use strict";
@@ -11,72 +13,21 @@
   const on = (el, ev, fn) => el && el.addEventListener(ev, fn);
   const toNum = (v) => { const n = Number(String(v ?? "").replace(/[^0-9.\-]/g,"")); return Number.isFinite(n)? n : null; };
 
-  const LKEY = "bp_exercise_entries_v6";
+  const LKEY = "bp_exercise_entries_v7";
   const state = { csv: { headers: [], rows: [] }, chart: null };
 
   // ---------- Boot ----------
   on(window, "DOMContentLoaded", () => {
     bindTabs();
-    lockUI("Loading your exercise library…");
-    loadCSVNoWorker("data/master.csv")
-      .then(({headers, rows}) => {
-        state.csv = { headers, rows };
-        unlockUI();
-        initAll();
-      })
-      .catch((err) => {
-        showError("CSV failed to load/parse: " + err.message);
-        // Unlock tab switching so you can navigate and see diagnostics
-        unlockUI();
-        // Still initialize non-CSV features so Plan/Save/Progress work;
-        // Library/Ask will show “No CSV suggestions” (no hallucination).
-        initAll();
+    // load CSV first (no worker to avoid CSP issues)
+    loadCSV("data/master.csv")
+      .then(({headers, rows}) => { state.csv = { headers, rows }; })
+      .catch((err) => { showError("CSV load/parse issue: " + err.message); })
+      .finally(() => {
+        // App is usable even if CSV failed (no hallucination—CSV features just show nothing)
+        bindPlan(); bindAsk(); renderLibrary(); renderHistory(); initChart(); renderDiagnostics();
       });
   });
-
-  function initAll(){
-    try { bindPlan(); } catch(e){ showError("Plan init error"); console.error(e); }
-    try { bindAsk(); } catch(e){ showError("Ask init error"); console.error(e); }
-    try { renderLibrary(); } catch(e){ showError("Library render error"); console.error(e); }
-    try { renderHistory(); } catch(e){ showError("History render error"); console.error(e); }
-    try { initChart(); } catch(e){ console.warn("Chart unavailable"); }
-    try { renderDiagnostics(); } catch(e){ /* ignore */ }
-  }
-
-  // ---------- CSV loader (no Worker, no CSP issues) ----------
-  async function loadCSVNoWorker(url){
-    if (!window.Papa) throw new Error("PapaParse not loaded");
-    // First attempt (no cache)
-    try {
-      return await fetchAndParse(url, { cache: "no-store" });
-    } catch (e1) {
-      // Retry with a cache-busting query
-      return await fetchAndParse(url + (url.includes("?") ? "&" : "?") + "v=" + Date.now(), { cache: "no-store" });
-    }
-  }
-
-  async function fetchAndParse(url, fetchOpts){
-    const r = await fetch(url, { method: "GET", ...fetchOpts });
-    if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
-    const text = await r.text();
-    const res = Papa.parse(text, { header: true, skipEmptyLines: true, worker: false });
-    const rows = Array.isArray(res?.data) ? res.data : [];
-    const headers = res?.meta?.fields || Object.keys(rows[0] || {});
-    if (!headers.length) throw new Error("Missing header row");
-    if (!rows.length) throw new Error("0 data rows");
-    return { headers, rows };
-  }
-
-  // ---------- Lock/Unlock/Error ----------
-  function lockUI(msg){
-    $$(".btn, .tab").forEach(el => el.setAttribute("disabled","true"));
-    const b = $("#error-banner"); if (b){ b.hidden = false; b.textContent = msg; }
-  }
-  function unlockUI(){
-    $$(".btn, .tab").forEach(el => el.removeAttribute("disabled"));
-    const b = $("#error-banner"); if (b){ b.hidden = true; b.textContent = ""; }
-  }
-  function showError(msg){ const b = $("#error-banner"); if (b){ b.hidden = false; b.textContent = msg; } }
 
   // ---------- Tabs ----------
   function bindTabs(){
@@ -88,6 +39,33 @@
       });
     });
   }
+
+  // ---------- CSV (no Worker, no hang) ----------
+  async function loadCSV(url){
+    if (!window.Papa) throw new Error("CSV engine missing");
+    const r1 = await tryParse(url);
+    if (r1) return r1;
+    const bust = url + (url.includes("?") ? "&" : "?") + "v=" + Date.now();
+    const r2 = await tryParse(bust);
+    if (r2) return r2;
+    throw new Error("Could not parse CSV (check header row and commas)");
+  }
+
+  async function tryParse(url){
+    try{
+      const resp = await fetch(url, { cache: "no-store" });
+      if (!resp.ok) return null;
+      const text = await resp.text();
+      const res = Papa.parse(text, { header: true, skipEmptyLines: true, worker: false });
+      const rows = Array.isArray(res?.data) ? res.data : [];
+      const headers = res?.meta?.fields || Object.keys(rows[0] || {});
+      if (!headers.length || !rows.length) return null;
+      return { headers, rows };
+    }catch{ return null; }
+  }
+
+  // ---------- Error banner ----------
+  function showError(msg){ const b = $("#error-banner"); if (b){ b.hidden = false; b.textContent = msg; } }
 
   // ---------- Helpers ----------
   function colAnyOf(...cand){
@@ -102,15 +80,10 @@
 
   // ---------- Plan ----------
   function bindPlan(){
-    const form = $("#plan-form");
-    const gen  = $("#btn-generate");
-    const clr  = $("#btn-clear");
-    const sav  = $("#btn-save");
-
-    on(form, "submit", (e)=> e.preventDefault());
-    on(gen,  "click", generatePlan);
-    on(clr,  "click", clearPlanForm);
-    on(sav,  "click", saveToday);
+    on($("#plan-form"), "submit", (e)=> e.preventDefault());
+    on($("#btn-generate"), "click", generatePlan);
+    on($("#btn-clear"),    "click", clearPlanForm);
+    on($("#btn-save"),     "click", saveToday);
   }
 
   function getPlanInputs(){
@@ -135,21 +108,24 @@
     const lines = [];
 
     lines.push(`• Focus: ${v.focus.toUpperCase()}`);
-    if (v.deltaPct != null){
+
+    // Show HRV Δ% only when meaningful (abs change >= 0.1%)
+    if (v.deltaPct != null && Math.abs(v.deltaPct) >= 0.1){
       lines.push(`• HRV Δ%: ${v.deltaPct.toFixed(1)}% (${v.hrvToday ?? "?"} vs ${v.hrvBaseline ?? "?"} ms)`);
       if (v.deltaPct < -10) lines.push("  → Lower intensity/volume; joint-friendly emphasis.");
       else if (v.deltaPct > 5) lines.push("  → You can emphasize performance or volume.");
     }
+
     if (v.sleepEff != null){ lines.push(`• Sleep efficiency: ${v.sleepEff}%`); if (v.sleepEff < 80) lines.push("  → Keep today sub-maximal; extend warm-up."); }
     if (v.sbp != null && v.dbp != null){ lines.push(`• BP: ${v.sbp}/${v.dbp} mmHg`); if (v.sbp>=160 || v.dbp>=90) lines.push("  → Avoid Valsalva; longer rest; stop if symptomatic."); }
     if (v.tir != null){ lines.push(`• CGM TIR 70–180: ${v.tir}%`); if (v.tir < 70) lines.push("  → Prefer steady, low-to-moderate intensity."); }
     if (v.crp != null){ lines.push(`• hs-CRP: ${v.crp} mg/L`); if (v.crp >= 3) lines.push("  → Favor recovery; cap intensity and volume."); }
 
-    // CSV-driven suggestions (only real columns; nothing invented)
+    // CSV-derived suggestions (only real columns; nothing invented)
     const rows = state.csv.rows || [];
     const titleCol = colAnyOf("Exercise Type","title","name","protocol","exercise");
     const coachCol = colAnyOf("coach_script_non_api","coach_script","coach_notes");
-    const typeCol  = colAnyOf("type","category","modality"); // use your real column names if present
+    const typeCol  = colAnyOf("type","category","modality");
     const muscleCol = colAnyOf("Muscle Mass/Gain Muscle","muscle_mass","muscle");
 
     const aerobicMatch = (r) => {
@@ -163,7 +139,6 @@
       if ((v.focus === "aerobic" || v.focus === "both") && typeCol && aerobicMatch(r)) picks.push(r);
     }
     const uniq = Array.from(new Set(picks));
-
     lines.push("", "Suggested protocols from CSV:");
     if (!uniq.length){ lines.push("• No focus-matched items found in CSV."); }
     else {
@@ -174,14 +149,22 @@
       });
     }
 
-    lines.push("", "— AI Addendum —");
+    // Do NOT print “AI unavailable”. Only add an addendum when we have it.
     o.textContent = lines.join("\n");
 
     try{
-      fetch("/api/coach",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:"plan_addendum", metrics:v, focus:v.focus})})
-        .then(r=> r.ok? r.json(): Promise.reject(r.statusText))
-        .then(j=>{ if (j && j.text) o.textContent = o.textContent + "\n" + j.text; })
-        .catch(()=>{ o.textContent = o.textContent + "\n(AI addendum unavailable; deterministic plan shown.)"; });
+      fetch("/api/coach",{
+        method:"POST",
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({mode:"plan_addendum", metrics:v, focus:v.focus})
+      })
+      .then(r=> r.ok? r.json() : Promise.reject())
+      .then(j=>{
+        if (j && j.text){
+          o.textContent = o.textContent + "\n\n— AI Addendum —\n" + j.text;
+        }
+      })
+      .catch(()=>{}); // silent if unavailable
     }catch{}
   }
 
@@ -224,7 +207,7 @@
         chip.onclick = () => { $$(".filter-chip").forEach(c=>c.classList.remove("active")); chip.classList.add("active"); draw(val); };
         filters.appendChild(chip);
       });
-      const clearBtn = $("#btn-clear-filters"); if (clearBtn){ clearBtn.onclick = () => { $$(".filter-chip").forEach(c=>c.classList.remove("active")); draw(null); }; }
+      $("#btn-clear-filters")?.addEventListener("click", () => { $$(".filter-chip").forEach(c=>c.classList.remove("active")); draw(null); });
     }
 
     function draw(activeVal){
@@ -243,7 +226,7 @@
     draw(null);
   }
 
-  // ---------- Ask ----------
+  // ---------- Ask (no noisy fallback) ----------
   function bindAsk(){
     const btn = $("#ask-btn");
     on(btn,"click", ()=>{
@@ -267,14 +250,20 @@
         });
       } catch { lines.push("Deterministic suggestions unavailable."); }
 
-      lines.push("", "— AI Addendum —");
       out.textContent = lines.join("\n");
 
       try{
-        fetch("/api/coach",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:"ask_addendum", query:q})})
-          .then(r=> r.ok? r.json(): Promise.reject(r.statusText))
-          .then(j=>{ if (j && j.text) out.textContent = out.textContent + "\n" + j.text; })
-          .catch(()=>{ out.textContent = out.textContent + "\n(AI addendum unavailable.)"; });
+        fetch("/api/coach",{
+          method:"POST",headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({mode:"ask_addendum", query:q})
+        })
+        .then(r=> r.ok? r.json(): Promise.reject())
+        .then(j=>{
+          if (j && j.text){
+            out.textContent = out.textContent + "\n\n— AI Addendum —\n" + j.text;
+          }
+        })
+        .catch(()=>{});
       }catch{}
     });
   }
@@ -307,7 +296,6 @@
     });
     updateChart();
   }
-
   function updateChart(){
     if (!state.chart) return;
     const entries = getEntries().sort((a,b)=>a.ts-b.ts);
