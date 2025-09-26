@@ -7,7 +7,6 @@
 
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-
   <link rel="stylesheet" href="assets/styles.css" />
 
   <!-- CSV + Charts via CDN -->
@@ -25,8 +24,7 @@
         <button class="tab active" data-tab="plan" role="tab" aria-selected="true">Plan</button>
         <button class="tab" data-tab="library" role="tab" aria-selected="false">Library</button>
         <button class="tab" data-tab="progress" role="tab" aria-selected="false">Progress</button>
-        <button class="tab" data-tab="ask" role="tab" aria-selected="false">Ask</button>
-        <button class="tab" data-tab="data" role="tab" aria-selected="false">Data</button>
+        <!-- Data tab button intentionally removed from normal navigation -->
       </nav>
     </div>
   </header>
@@ -40,34 +38,13 @@
         <div class="card">
           <h2>Today’s Inputs</h2>
           <form id="plan-form" autocomplete="off" novalidate>
-            <div class="field">
-              <label for="hrvBaseline">HRV 7-day baseline (ms)</label>
-              <input id="hrvBaseline" inputmode="decimal" placeholder="e.g., 40" />
-            </div>
-            <div class="field">
-              <label for="hrvToday">HRV today (ms)</label>
-              <input id="hrvToday" inputmode="decimal" placeholder="e.g., 36" />
-            </div>
-            <div class="field">
-              <label for="sleepEff">Sleep efficiency (%)</label>
-              <input id="sleepEff" inputmode="decimal" placeholder="e.g., 86" />
-            </div>
-            <div class="field">
-              <label for="sbp">SBP (mmHg)</label>
-              <input id="sbp" inputmode="decimal" placeholder="e.g., 122" />
-            </div>
-            <div class="field">
-              <label for="dbp">DBP (mmHg)</label>
-              <input id="dbp" inputmode="decimal" placeholder="e.g., 78" />
-            </div>
-            <div class="field">
-              <label for="tir">CGM Time-in-Range 70–180 (%)</label>
-              <input id="tir" inputmode="decimal" placeholder="e.g., 78" />
-            </div>
-            <div class="field">
-              <label for="crp">hs-CRP (mg/L)</label>
-              <input id="crp" inputmode="decimal" placeholder="e.g., 1.2" />
-            </div>
+            <div class="field"><label for="hrvBaseline">HRV 7-day baseline (ms)</label><input id="hrvBaseline" inputmode="decimal" placeholder="e.g., 40" /></div>
+            <div class="field"><label for="hrvToday">HRV today (ms)</label><input id="hrvToday" inputmode="decimal" placeholder="e.g., 36" /></div>
+            <div class="field"><label for="sleepEff">Sleep efficiency (%)</label><input id="sleepEff" inputmode="decimal" placeholder="e.g., 86" /></div>
+            <div class="field"><label for="sbp">SBP (mmHg)</label><input id="sbp" inputmode="decimal" placeholder="e.g., 122" /></div>
+            <div class="field"><label for="dbp">DBP (mmHg)</label><input id="dbp" inputmode="decimal" placeholder="e.g., 78" /></div>
+            <div class="field"><label for="tir">CGM Time-in-Range 70–180 (%)</label><input id="tir" inputmode="decimal" placeholder="e.g., 78" /></div>
+            <div class="field"><label for="crp">hs-CRP (mg/L)</label><input id="crp" inputmode="decimal" placeholder="e.g., 1.2" /></div>
 
             <fieldset class="field">
               <legend>Exercise Focus</legend>
@@ -99,6 +76,7 @@
         <div class="library-header">
           <h2>Library</h2>
           <div class="library-actions">
+            <input id="library-search" class="search-input" placeholder="Search by name, type, or goal…" />
             <button id="btn-clear-filters" class="btn">Clear Fields</button>
           </div>
         </div>
@@ -118,32 +96,15 @@
       </div>
     </section>
 
-    <!-- ASK -->
-    <section id="tab-ask" class="tabpanel" role="tabpanel">
-      <div class="card">
-        <h2>Ask the Coach</h2>
-        <p class="muted">
-          Works without Plan data. You’ll see deterministic suggestions from the CSV plus an AI addendum.
-        </p>
-        <div class="ask-row">
-          <input id="ask-input" class="ask-input" placeholder="e.g., Short, joint-friendly session" />
-          <button id="ask-btn" class="btn primary" type="button">Ask</button>
-        </div>
-        <div id="ask-output" class="ask-output"></div>
-      </div>
-    </section>
-
-    <!-- DATA -->
-    <section id="tab-data" class="tabpanel" role="tabpanel">
+    <!-- DATA (hidden; only visible via #admin or Shift+D x3) -->
+    <section id="tab-data" class="tabpanel" role="tabpanel" hidden>
       <div class="card">
         <h2>CSV Diagnostics</h2>
         <div id="csv-diagnostics"></div>
       </div>
     </section>
 
-    <footer class="footer muted">
-      © BrainPreserve. CSV-first logic; AI addenda are clearly labeled.
-    </footer>
+    <footer class="footer muted">© BrainPreserve. CSV-first logic; AI addenda are clearly labeled.</footer>
   </main>
 </body>
 </html>
