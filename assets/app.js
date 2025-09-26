@@ -1,467 +1,277 @@
-/* BrainPreserve — Exercise Coach
- * CSV-first deterministic logic + automatic AI addendum
- * Multiple saves per day are allowed (timestamped entries).
- */
+/* Brain Exercise App — Emergency Recovery Build
+   Goal: Make the UI unbreakable. Tabs always work. Generate/Save always work.
+   CSV/Chart load are optional; failures show a banner but never freeze the UI.
+*/
+(function () {
+  "use strict";
 
-const $ = (sel, el = document) => el.querySelector(sel);
-const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
-const on = (el, ev, fn) => el && el.addEventListener(ev, fn);
+  // ---------- tiny utils ----------
+  const $  = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+  const on = (el, ev, fn) => el && el.addEventListener(ev, fn);
+  const toNum = (v) => { const n = Number(String(v ?? "").replace(/[^0-9.\-]/g,"")); return Number.isFinite(n)? n : null; };
+  const showError = (msg) => { const b = $("#error-banner"); if (b){ b.textContent = msg; b.hidden = false; } };
+  const safe = (fn) => (...args) => { try { return fn(...args); } catch(e){ console.error(e); showError("A component failed; the UI continues in safe mode."); } };
 
-/* ---------- string & CSV helpers ---------- */
-const splitMulti = (raw) => {
-  if (!raw || typeof raw !== 'string') return [];
-  const parts = (raw.includes(';') ? raw.split(';') : raw.split(','))
-    .map(s => s.trim())
-    .filter(Boolean);
-  return parts;
-};
+  const LKEY = "bp_exercise_entries_v3"; // v3 keeps multiple daily saves
 
-const htmlEscape = (s='') =>
-  s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]);
+  const state = { csv: { headers: [], rows: [] }, chart: null };
 
-/* ---------- column detection (case/space tolerant) ---------- */
-const normalize = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g,'_');
+  // Always bind after DOM ready; guard every step
+  on(window, "DOMContentLoaded", safe(() => {
+    bindTabs();
+    bindPlan();
+    bindAsk();
+    tryLoadCSV();     // best-effort
+    tryInitChart();   // best-effort
+    renderHistory();  // table view from localStorage
+  }));
 
-const detectColumnSet = (rows) => {
-  const cols = Object.keys(rows[0] || {});
-  const normMap = {};
-  for (const c of cols) normMap[normalize(c)] = c;
-  const pick = (...aliases) => {
-    for (const a of aliases) { const k = normMap[normalize(a)]; if (k) return k; }
-    return undefined;
-  };
-  return {
-    title:         pick('title','name','protocol'),
-    summary:       pick('summary','desc','description','details'),
-    goals:         pick('goals','goal','indications'),
-    exercise_type: pick('exercise_type','exercise type','type','modality'),
-    equipment:     pick('equipment','home_equipment'),
-    time_min:      pick('time_minutes','duration_minutes'),
-    coach_non_api: pick('coach_script_non_api','non_api_coach','coach_text'),
-    safety:        pick('safety','contraindications','notes'),
-    intensity:     pick('intensity','rpe','zone'),
-    tags:          pick('tags','labels'),
-    key:           pick('exercise_key','key','id')
-  };
-};
-
-const col = (row, key) => (key && key in row ? row[key] : undefined);
-
-/* ---------- state ---------- */
-const State = {
-  rows: [],
-  cols: {},
-  filters: { goals: new Set(), types: new Set(), equip: new Set(), time: null },
-  chart: null,
-  admin: false
-};
-
-/* ---------- tabs ---------- */
-const wireTabs = () => {
-  $$('.tab').forEach(btn => {
-    on(btn, 'click', () => {
-      $$('.tab').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const tab = btn.dataset.tab;
-      $$('.view').forEach(v => v.classList.remove('active'));
-      $('#' + tab).classList.add('active');
+  // ---------- tabs (cannot fail) ----------
+  function bindTabs(){
+    $$(".tab").forEach(btn=>{
+      on(btn,"click",()=> {
+        const name = btn.dataset.tab;
+        $$(".tab").forEach(t=>t.classList.toggle("active", t===btn));
+        $$(".tabpanel").forEach(p=>p.classList.toggle("active", p.id === `tab-${name}`));
+      });
     });
-  });
-};
-
-const applyAdminVisibility = () => {
-  const q = new URLSearchParams(location.search);
-  State.admin = q.get('admin') === '1' || location.hash.toLowerCase() === '#admin';
-  const dataTabBtn = $(`.tab[data-tab="data"]`);
-  const dataSection = $('#data');
-  if (State.admin) {
-    dataTabBtn?.removeAttribute('hidden');
-    dataSection?.removeAttribute('hidden');
-  } else {
-    dataTabBtn?.setAttribute('hidden','');
-    dataSection?.setAttribute('hidden','');
   }
-};
 
-/* ---------- CSV load ---------- */
-const loadCSV = () => new Promise((resolve, reject) => {
-  Papa.parse('data/master.csv', {
-    header: true, skipEmptyLines: true, download: true,
-    complete: ({ data, errors }) => {
-      if (errors && errors.length) console.warn('CSV parse warnings:', errors.slice(0,3));
-      const rows = data.filter(r => Object.values(r).some(v => v && String(v).trim() !== ''));
-      State.rows = rows;
-      State.cols = detectColumnSet(rows);
-      const diag = { detected_columns: State.cols, total_rows: rows.length, sample_row: rows[0]||null };
-      const diagEl = $('#csvDiag');
-      if (diagEl) diagEl.textContent = JSON.stringify(diag, null, 2);
-      renderCSVPreview(); // admin-only table
-      resolve();
-    },
-    error: (err) => reject(err)
-  });
-});
+  // ---------- plan ----------
+  function bindPlan(){
+    const form = $("#plan-form");
+    const gen  = $("#btn-generate");
+    const clr  = $("#btn-clear");
+    const sav  = $("#btn-save");
 
-/* ---------- Data tab: preview ---------- */
-const renderCSVPreview = () => {
-  if (!State.admin) return;
-  const tbl = $('#csvTable'); if (!tbl) return;
-  tbl.innerHTML = '';
-  const rows = State.rows.slice(0,50);
-  if (!rows.length) return;
-  const cols = Object.keys(rows[0]);
-  const thead = document.createElement('thead');
-  thead.innerHTML = `<tr>${cols.map(c=>`<th>${htmlEscape(c)}</th>`).join('')}</tr>`;
-  tbl.appendChild(thead);
-  const tb = document.createElement('tbody');
-  for (const r of rows) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = cols.map(c => `<td>${htmlEscape(String(r[c] ?? ''))}</td>`).join('');
-    tb.appendChild(tr);
+    on(form, "submit", (e)=> e.preventDefault()); // never auto-clear
+    on(gen,  "click", safe(generatePlan));
+    on(clr,  "click", safe(clearPlanForm));
+    on(sav,  "click", safe(saveToday)));
   }
-  tbl.appendChild(tb);
-};
 
-/* ---------- Library filters & render ---------- */
-const uniqueFrom = (key) => {
-  const name = State.cols[key];
-  if (!name) return [];
-  const sets = new Set();
-  for (const r of State.rows) splitMulti(r[name]).forEach(v => sets.add(v));
-  return Array.from(sets).sort((a,b)=>a.localeCompare(b));
-};
-
-const renderChips = (container, items, group) => {
-  container.innerHTML = '';
-  items.forEach(v => {
-    const id = `chip-${group}-${v.replace(/\s+/g,'_')}`;
-    const lab = document.createElement('label');
-    lab.className = 'chip';
-    lab.innerHTML = `<input type="checkbox" id="${id}" value="${htmlEscape(v)}"> ${htmlEscape(v)}`;
-    container.appendChild(lab);
-    on(lab.querySelector('input'), 'change', (e) => {
-      const set = State.filters[group];
-      if (e.target.checked) set.add(v); else set.delete(v);
-      renderLibrary();
-    });
-  });
-};
-
-const renderTimeRadios = () => {
-  const wrap = $('#timeRadios');
-  wrap.innerHTML = `
-    <label><input type="radio" name="timeOpt" value="10"> 10 min</label>
-    <label><input type="radio" name="timeOpt" value="20"> 20 min</label>
-    <label><input type="radio" name="timeOpt" value="30"> 30+ min</label>
-  `;
-  $$('input[name="timeOpt"]').forEach(r =>
-    on(r, 'change', () => { State.filters.time = Number(r.value); renderLibrary(); })
-  );
-
-  if (!State.cols.time_min) {
-    $('#timeNotice').textContent = 'No time column detected in CSV. Time filter disabled. Add a numeric "time_minutes" column to enable deterministic time filtering.';
-    wrap.closest('details').open = true;
-  } else {
-    $('#timeNotice').textContent = '';
-  }
-};
-
-const clearLibraryFilters = () => {
-  State.filters.goals.clear();
-  State.filters.types.clear();
-  State.filters.equip.clear();
-  State.filters.time = null;
-  $$('#goalChips input, #typeChips input, #equipChips input').forEach(i => i.checked = false);
-  $$('input[name="timeOpt"]').forEach(r => r.checked = false);
-  renderLibrary();
-};
-
-const libraryFilter = (row) => {
-  const c = State.cols;
-  if (State.filters.goals.size && c.goals) {
-    const g = new Set(splitMulti(row[c.goals]));
-    if (![...State.filters.goals].some(x => g.has(x))) return false;
-  }
-  if (State.filters.types.size && c.exercise_type) {
-    const t = new Set(splitMulti(row[c.exercise_type]));
-    if (![...State.filters.types].some(x => t.has(x))) return false;
-  }
-  if (State.filters.equip.size && c.equipment) {
-    const e = new Set(splitMulti(row[c.equipment]));
-    if (![...State.filters.equip].some(x => e.has(x))) return false;
-  }
-  if (State.filters.time && c.time_min) {
-    const tm = Number(row[c.time_min] || 0);
-    if (isFinite(tm)) {
-      if (State.filters.time === 10 && tm > 10) return false;
-      if (State.filters.time === 20 && (tm <= 10 || tm > 20)) return false;
-    }
-  }
-  return true;
-};
-
-const callCoachAPI = async (prompt) => {
-  try {
-    const res = await fetch('/api/coach', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ prompt })
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    return data.text || data.answer || data.output || '';
-  } catch {
-    return '';
-  }
-};
-
-const buildPromptFromRow = (r) => {
-  const c = State.cols;
-  const title = col(r,c.title) || col(r,c.exercise_type) || col(r,c.key) || 'Protocol';
-  const summary = col(r,c.summary) || '';
-  const goals = c.goals ? splitMulti(r[c.goals]).join(', ') : '';
-  const type  = c.exercise_type ? splitMulti(r[c.exercise_type]).join(', ') : '';
-  const equip = c.equipment ? splitMulti(r[c.equipment]).join(', ') : '';
-  const safety = col(r,c.safety) || '';
-  const intensity = col(r,c.intensity) || '';
-  return `You are an exercise coach for older adults focused on cognitive health. Provide a concise coaching paragraph that adds value beyond the deterministic CSV fields.
-Protocol: ${title}
-Summary: ${summary}
-Goals: ${goals}
-Type: ${type}
-Equipment: ${equip}
-Intensity: ${intensity}
-Safety notes: ${safety}
-Tone: clinical, supportive, concise. Avoid repeating the CSV fields verbatim.`;
-};
-
-const renderLibrary = async () => {
-  const list = $('#libraryList');
-  list.innerHTML = '';
-  const c = State.cols;
-  const rows = State.rows.filter(libraryFilter);
-
-  for (const r of rows) {
-    const title = col(r,c.title) || col(r,c.exercise_type) || col(r,c.key) || 'Protocol';
-    const summary = col(r,c.summary) || '';
-    const goals = c.goals ? splitMulti(r[c.goals]) : [];
-    const type  = c.exercise_type ? splitMulti(r[c.exercise_type]) : [];
-    const equip = c.equipment ? splitMulti(r[c.equipment]) : [];
-    const timeM = c.time_min ? Number(r[c.time_min] || 0) : null;
-    const nonAPI = col(r,c.coach_non_api) || '';
-
-    const card = document.createElement('article');
-    card.className = 'card';
-    card.innerHTML = `
-      <h3>${htmlEscape(title)}</h3>
-      ${summary ? `<p class="prose">${htmlEscape(summary)}</p>` : ''}
-      <div class="protocol-meta">
-        ${goals.map(g=>`<span class="badge">${htmlEscape(g)}</span>`).join('')}
-        ${type.map(t=>`<span class="badge">${htmlEscape(t)}</span>`).join('')}
-        ${timeM?`<span class="badge">${timeM} min</span>`:''}
-      </div>
-      ${equip.length?`<p class="notice"><strong>Equipment:</strong> ${equip.map(htmlEscape).join(', ')}</p>`:''}
-      ${nonAPI?`<div class="prose"><strong>Coach Summary (deterministic):</strong> ${htmlEscape(nonAPI)}</div>`:''}
-      <div class="ai-block" hidden>
-        <h4>AI Coaching Insights</h4>
-        <div class="prose"></div>
-      </div>
-    `;
-    list.appendChild(card);
-
-    // Auto AI addendum
-    const aiWrap = card.querySelector('.ai-block');
-    const aiBody = aiWrap.querySelector('.prose');
-    const prompt = buildPromptFromRow(r);
-    const text = await callCoachAPI(prompt);
-    if (text && text.trim()) {
-      aiBody.textContent = text.trim();
-      aiWrap.hidden = false;
-    }
-  }
-};
-
-/* ---------- Plan: deterministic + save ---------- */
-const computePlanDeterministic = (m) => {
-  const hrvDelta = m.hrvBaseline ? ((m.hrvToday - m.hrvBaseline) / m.hrvBaseline) * 100 : 0;
-  const riskyBP = (m.sbp >= 160) || (m.dbp >= 100);
-  const poorSleep = m.sleepEff < 80;
-  const lowTIR = m.tir < 70;
-  const highCRP = m.crp >= 3;
-
-  let focus = m.focus;
-  if (riskyBP || highCRP) focus = 'aerobic';
-  if (poorSleep && focus === 'muscle') focus = 'both';
-
-  const msg = [
-    `HRV Δ: ${isFinite(hrvDelta)?hrvDelta.toFixed(1):'—'}%`,
-    `Sleep eff: ${m.sleepEff}%`,
-    `BP: ${m.sbp}/${m.dbp} mmHg`,
-    `TIR: ${m.tir}%`,
-    `hs-CRP: ${m.crp} mg/L`,
-    riskyBP ? '— Caution: elevated BP → lower-intensity aerobic & longer warm-up.' : '',
-    highCRP ? '— Inflammation elevated → keep intensity moderate.' : '',
-    lowTIR ? '— Metabolic off → avoid high-glycolytic repeats.' : ''
-  ].filter(Boolean).join('<br>');
-
-  const steer = {
-    muscle: 'Technique-first resistance (2–3 sets, RPE 6–7), finish with mobility.',
-    aerobic: 'Zone 2–3 continuous or intervals (20–30 min), nasal-breathing pace.',
-    both: '15–20 min Z2, then 2 compound sets (RPE 6–7), finish with balance.'
-  }[focus];
-
-  return {
-    html: `<p>${msg}</p><p><strong>Plan focus:</strong> ${focus}. ${steer}</p>`,
-    prompt: `Create a one-paragraph, safe session for an older adult focused on brain health.
-HRV baseline ${m.hrvBaseline} ms, today ${m.hrvToday} ms; Sleep ${m.sleepEff}%; BP ${m.sbp}/${m.dbp}; TIR ${m.tir}%; hs-CRP ${m.crp} mg/L.
-Desired focus: ${m.focus}. Apply safety gating as appropriate.`
-  };
-};
-
-const wirePlan = () => {
-  const f = $('#metricsForm');
-
-  on(f, 'submit', async (e) => {
-    e.preventDefault(); // prevent page reload/clear
-    const m = {
-      hrvBaseline: Number($('#hrvBaseline').value),
-      hrvToday: Number($('#hrvToday').value),
-      sleepEff: Number($('#sleepEff').value),
-      sbp: Number($('#sbp').value),
-      dbp: Number($('#dbp').value),
-      tir: Number($('#tir').value),
-      crp: Number($('#crp').value),
-      focus: ($$('input[name="focus"]:checked')[0]||{}).value || 'muscle'
+  function getPlanInputs(){
+    const focus = ($$('input[name="focus"]:checked')[0]?.value) || "muscle";
+    const hrvBaseline = toNum($("#hrvBaseline")?.value);
+    const hrvToday    = toNum($("#hrvToday")?.value);
+    const deltaPct = (hrvBaseline && hrvToday) ? ((hrvToday - hrvBaseline)/hrvBaseline)*100 : null;
+    return {
+      focus,
+      hrvBaseline, hrvToday, deltaPct,
+      sleepEff: toNum($("#sleepEff")?.value),
+      sbp: toNum($("#sbp")?.value),
+      dbp: toNum($("#dbp")?.value),
+      tir: toNum($("#tir")?.value),
+      crp: toNum($("#crp")?.value),
     };
-    const det = computePlanDeterministic(m);
-    $('#planDeterministic').innerHTML = det.html;
+  }
 
-    const aiText = await callCoachAPI(det.prompt);
-    if (aiText && aiText.trim()) {
-      $('#planAIText').textContent = aiText.trim();
-      $('#planAI').hidden = false;
-    } else {
-      $('#planAI').hidden = true;
+  function generatePlan(){
+    const o = $("#plan-output"); if (!o) return;
+    const v = getPlanInputs();
+    const lines = [];
+
+    lines.push(`• Focus: ${v.focus.toUpperCase()}`);
+    if (v.deltaPct != null){
+      lines.push(`• HRV Δ%: ${v.deltaPct.toFixed(1)}% (${v.hrvToday ?? "?"} vs ${v.hrvBaseline ?? "?"} ms)`);
+      if (v.deltaPct < -10) lines.push("  → Lower intensity/volume; joint-friendly emphasis.");
+      else if (v.deltaPct > 5) lines.push("  → You can emphasize performance or volume.");
     }
-  });
+    if (v.sleepEff != null){ lines.push(`• Sleep efficiency: ${v.sleepEff}%`); if (v.sleepEff < 80) lines.push("  → Keep today sub-maximal; extend warm-up."); }
+    if (v.sbp != null && v.dbp != null){ lines.push(`• BP: ${v.sbp}/${v.dbp} mmHg`); if (v.sbp>=140 || v.dbp>=90) lines.push("  → Avoid Valsalva; longer rest; stop if symptomatic."); }
+    if (v.tir != null){ lines.push(`• CGM TIR 70–180: ${v.tir}%`); if (v.tir < 70) lines.push("  → Prefer steady, low-to-moderate intensity."); }
+    if (v.crp != null){ lines.push(`• hs-CRP: ${v.crp} mg/L`); if (v.crp >= 3) lines.push("  → Favor recovery; cap intensity and volume."); }
 
-  on($('#clearMetrics'), 'click', () => {
-    f.reset();
-    $('#planDeterministic').innerHTML = '';
-    $('#planAI').hidden = true;
-    $('#saveMsg').hidden = true;
-  });
+    // Best-effort CSV suggestions (never required for the UI to work)
+    try {
+      const titleCol = pickCol(["title","name","protocol","exercise"]);
+      const coachCol = pickCol(["coach_script_non_api","coach_script","coach_notes"]);
+      const typeCol  = pickCol(["type","category"]);
+      if (state.csv.rows.length && (titleCol || typeCol || coachCol)){
+        lines.push("", "Suggested protocols from CSV:");
+        const aerobicMatch = (r) => {
+          const t = (typeCol ? String(r[typeCol]) : "").toLowerCase();
+          return /\baerobic|cardio|endurance|zone|walk|bike|row|run\b/.test(t);
+        };
+        const muscleCol = state.csv.headers.find(h => /muscle/.test((h||"").toLowerCase()));
+        const picks = [];
+        for(const r of state.csv.rows){
+          if (v.focus === "muscle" || v.focus === "both"){ if (muscleCol && String(r[muscleCol]).trim()==="1") picks.push(r); }
+          if (v.focus === "aerobic" || v.focus === "both"){ if (typeCol && aerobicMatch(r)) picks.push(r); }
+        }
+        if (!picks.length) lines.push("• No focus-matched items in CSV.");
+        for (const r of picks.slice(0,6)){
+          const t = titleCol ? String(r[titleCol]) : "(untitled)";
+          lines.push(`• ${t}`);
+          if (coachCol && r[coachCol]) lines.push(`   – ${String(r[coachCol])}`);
+        }
+      }
+    } catch(e){ console.warn("CSV suggestion step skipped:", e); }
 
-  on($('#saveMetrics'), 'click', () => {
-    const now = new Date();
-    const entry = {
-      id: now.getTime(), // unique
-      date: now.toISOString().slice(0,10),
-      time: now.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
-      hrvBaseline: Number($('#hrvBaseline').value || 0),
-      hrvToday: Number($('#hrvToday').value || 0),
-      sleepEff: Number($('#sleepEff').value || 0),
-      sbp: Number($('#sbp').value || 0),
-      dbp: Number($('#dbp').value || 0),
-      tir: Number($('#tir').value || 0),
-      crp: Number($('#crp').value || 0)
-    };
-    const arr = JSON.parse(localStorage.getItem('bp_days') || '[]');
-    arr.push(entry);
-    localStorage.setItem('bp_days', JSON.stringify(arr));
-    renderDays();
-    renderChart();
-    $('#saveMsg').hidden = false;
-  });
-};
-
-/* ---------- Progress (table + chart) ---------- */
-const renderDays = () => {
-  const arr = JSON.parse(localStorage.getItem('bp_days') || '[]');
-  const tbl = $('#daysTable');
-  tbl.innerHTML = '<tr><th>Date</th><th>Time</th><th>HRV base</th><th>HRV today</th><th>Δ%</th><th>Sleep%</th><th>BP</th><th>TIR%</th><th>CRP</th></tr>';
-  for (const d of arr) {
-    const delta = d.hrvBaseline ? ((d.hrvToday - d.hrvBaseline) / d.hrvBaseline) * 100 : 0;
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${d.date}</td><td>${d.time||''}</td><td>${d.hrvBaseline}</td><td>${d.hrvToday}</td><td>${isFinite(delta)?delta.toFixed(1):'—'}</td><td>${d.sleepEff}</td><td>${d.sbp}/${d.dbp}</td><td>${d.tir}</td><td>${d.crp}</td>`;
-    tbl.appendChild(tr);
+    // AI addendum — optional, never blocks UI
+    lines.push("", "— AI Addendum —");
+    o.textContent = lines.join("\n");
+    try {
+      fetch("/api/coach",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:"plan_addendum", metrics:v, focus:v.focus})})
+        .then(r=> r.ok ? r.json() : Promise.reject(r.statusText))
+        .then(j=>{ if (j && j.text) o.textContent = o.textContent + "\n" + j.text; })
+        .catch(()=>{ o.textContent = o.textContent + "\n(AI addendum unavailable; deterministic plan shown.)"; });
+    } catch { /* ignore */ }
   }
-};
 
-const renderChart = () => {
-  const arr = JSON.parse(localStorage.getItem('bp_days') || '[]');
-  const labels = arr.map(d => `${d.date} ${d.time||''}`.trim());
-  const data = arr.map(d => d.hrvBaseline ? ((d.hrvToday - d.hrvBaseline) / d.hrvBaseline) * 100 : 0);
-  const ctx = $('#progressChart');
-  if (State.chart) State.chart.destroy();
-  State.chart = new Chart(ctx, {
-    type: 'line',
-    data: { labels, datasets: [{ label: 'HRV Δ% (today vs baseline)', data }] },
-    options: { responsive: true, maintainAspectRatio: false }
-  });
-};
-
-/* ---------- Ask (independent of Plan) ---------- */
-const deterministicAnswer = (q) => {
-  const text = q.toLowerCase();
-  const c = State.cols;
-  const picks = [];
-  for (const r of State.rows) {
-    const fields = [
-      col(r, c.title), col(r, c.summary),
-      ...(c.goals? splitMulti(r[c.goals]):[]),
-      ...(c.exercise_type? splitMulti(r[c.exercise_type]):[]),
-      ...(c.tags? splitMulti(r[c.tags]):[])
-    ].filter(Boolean).join(' ').toLowerCase();
-    if (fields.includes(text)) picks.push(r);
-    if (picks.length >= 3) break;
+  function clearPlanForm(){
+    ["hrvBaseline","hrvToday","sleepEff","sbp","dbp","tir","crp"].forEach(id=>{ const el = $("#"+id); if (el) el.value=""; });
+    const o = $("#plan-output"); if (o) o.textContent = "";
   }
-  if (!picks.length) return 'No deterministic match in the CSV for that query.';
-  // Return titles and any available non-API summary for the top matches
-  return picks.map(r => {
-    const title = col(r,c.title) || col(r,c.exercise_type) || col(r,c.key) || 'Protocol';
-    const nonAPI = col(r,c.coach_non_api) || '';
-    return `<p><strong>${htmlEscape(title)}</strong>${nonAPI?`: ${htmlEscape(nonAPI)}`:''}</p>`;
-  }).join('');
-};
 
-const wireAsk = () => {
-  on($('#askBtn'), 'click', async () => {
-    const q = ($('#askInput').value || '').trim();
-    if (!q) return;
-    $('#askOutDet').innerHTML = deterministicAnswer(q);
-    const ai = await callCoachAPI(`Question: ${q}\nAdd a concise coaching paragraph for an older adult focused on brain health. Avoid repeating any deterministic details shown.`);
-    if (ai && ai.trim()) {
-      $('#askOutAIText').textContent = ai.trim();
-      $('#askOutAI').hidden = false;
-    } else {
-      $('#askOutAI').hidden = true;
+  function saveToday(){
+    const v = getPlanInputs();
+    const entry = { ts: Date.now(), date: new Date().toISOString().slice(0,10), ...v };
+    const arr = getEntries(); arr.push(entry);
+    localStorage.setItem(LKEY, JSON.stringify(arr));
+    renderHistory(); updateChart();
+  }
+
+  function getEntries(){
+    try { const raw = localStorage.getItem(LKEY); const arr = raw? JSON.parse(raw): []; return Array.isArray(arr)? arr: []; }
+    catch { return []; }
+  }
+
+  // ---------- library (safe no-ops if CSV missing) ----------
+  function renderLibrary(){
+    const grid = $("#library-grid"); const filters = $("#library-filters");
+    if (!grid || !filters) return;
+    grid.innerHTML = ""; filters.innerHTML = "";
+
+    if (!state.csv.rows.length){ grid.innerHTML = `<div class="muted">CSV not loaded yet.</div>`; return; }
+
+    const titleCol = pickCol(["title","name","protocol","exercise"]);
+    const typeCol  = pickCol(["type","category"]);
+    const coachCol = pickCol(["coach_script_non_api","coach_script","coach_notes"]);
+
+    // chips
+    if (typeCol){
+      const vals = Array.from(new Set(state.csv.rows.map(r=> String(r[typeCol]).trim()).filter(Boolean))).sort();
+      vals.slice(0,12).forEach(val=>{
+        const chip = document.createElement("button");
+        chip.className = "filter-chip"; chip.textContent = val; chip.dataset.val = val;
+        chip.onclick = () => { $$(".filter-chip").forEach(c=>c.classList.remove("active")); chip.classList.add("active"); draw(val); };
+        filters.appendChild(chip);
+      });
+      const clearBtn = $("#btn-clear-filters"); if (clearBtn){ clearBtn.onclick = () => { $$(".filter-chip").forEach(c=>c.classList.remove("active")); draw(null); }; }
     }
-  });
-};
 
-/* ---------- Boot ---------- */
-(async function boot(){
-  try {
-    applyAdminVisibility();
-    wireTabs();
-    await loadCSV();
-
-    // Filters
-    if (State.cols.goals) renderChips($('#goalChips'), uniqueFrom('goals'), 'goals');
-    if (State.cols.exercise_type) renderChips($('#typeChips'), uniqueFrom('exercise_type'), 'types');
-    if (State.cols.equipment) renderChips($('#equipChips'), uniqueFrom('equipment'), 'equip');
-    renderTimeRadios();
-    on($('#clearLibrary'), 'click', clearLibraryFilters);
-
-    // Main views
-    await renderLibrary();
-    wirePlan();
-    renderDays();
-    renderChart();
-    wireAsk();
-  } catch (e) {
-    console.error('Boot failure:', e);
-    wireTabs(); // keep UI usable even if load fails
+    function draw(activeVal){
+      grid.innerHTML = "";
+      const list = !activeVal? state.csv.rows : state.csv.rows.filter(r=> String(r[typeCol]).trim() === activeVal);
+      if (!list.length){ grid.innerHTML = `<div class="muted">No protocols to display.</div>`; return; }
+      for (const r of list){
+        const card = document.createElement("div"); card.className = "protocol";
+        const title = titleCol ? String(r[titleCol]) : "(untitled)";
+        const type  = typeCol ? ` <span class="muted">(${r[typeCol]})</span>` : "";
+        const coach = coachCol? String(r[coachCol]||"") : "";
+        card.innerHTML = `<h3>${escapeHtml(title)}${type}</h3>${coach? `<div class="muted">${escapeHtml(coach)}</div>`:""}`;
+        grid.appendChild(card);
+      }
+    }
+    draw(null);
   }
+
+  // ---------- ask (works without CSV) ----------
+  function bindAsk(){
+    const btn = $("#ask-btn");
+    on(btn,"click", safe(()=> {
+      const out = $("#ask-output"); const inp = $("#ask-input");
+      if (!out) return;
+      const q = String(inp?.value || "").trim();
+      const lines = [];
+      // Deterministic suggestions from CSV if available
+      try {
+        const titleCol = pickCol(["title","name","protocol","exercise"]);
+        const coachCol = pickCol(["coach_script_non_api","coach_script","coach_notes"]);
+        const rows = state.csv.rows || [];
+        const matches = q ? rows.filter(r=>{
+          const hay = ((titleCol? String(r[titleCol]).toLowerCase()+" ":"") + (coachCol? String(r[coachCol]).toLowerCase():""));
+          return hay.includes(q.toLowerCase());
+        }) : rows.slice(0,5);
+        lines.push("Deterministic suggestions (from CSV):");
+        if (!matches.length) lines.push("• No CSV suggestions.");
+        matches.slice(0,6).forEach(r=>{
+          const t = titleCol? String(r[titleCol]) : "(untitled)";
+          lines.push(`• ${t}`); if (coachCol && r[coachCol]) lines.push(`   – ${String(r[coachCol])}`);
+        });
+      } catch { lines.push("Deterministic suggestions unavailable."); }
+      lines.push("", "— AI Addendum —");
+      out.textContent = lines.join("\n");
+      // AI addendum (best-effort)
+      try{
+        fetch("/api/coach",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:"ask_addendum", query:q})})
+          .then(r=> r.ok? r.json(): Promise.reject(r.statusText))
+          .then(j=>{ if (j && j.text) out.textContent = out.textContent + "\n" + j.text; })
+          .catch(()=>{ out.textContent = out.textContent + "\n(AI addendum unavailable.)"; });
+      }catch{}
+    }));
+  }
+
+  // ---------- progress (table + optional chart) ----------
+  function renderHistory(){
+    const host = $("#history-table"); if (!host) return;
+    const entries = getEntries().sort((a,b)=>a.ts-b.ts);
+    if (!entries.length){ host.innerHTML = `<div class="muted">No saved entries yet.</div>`; return; }
+    const rows = entries.map(e=>`<tr>
+      <td>${new Date(e.ts).toLocaleString()}</td>
+      <td>${n(e.hrvBaseline)}</td><td>${n(e.hrvToday)}</td>
+      <td>${e.deltaPct!=null? e.deltaPct.toFixed(1)+'%':''}</td>
+      <td>${n(e.sleepEff)}</td><td>${n(e.sbp)}/${n(e.dbp)}</td>
+      <td>${n(e.tir)}</td><td>${n(e.crp)}</td><td>${e.focus}</td>
+    </tr>`).join("");
+    host.innerHTML = `<table>
+      <thead><tr>
+        <th>Saved at</th><th>HRV base</th><th>HRV</th><th>HRV Δ%</th>
+        <th>Sleep %</th><th>BP</th><th>TIR %</th><th>CRP</th><th>Focus</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  function tryInitChart(){
+    try {
+      const ctx = $("#hrvChart"); if (!ctx || !window.Chart) return;
+      state.chart = new Chart(ctx, {
+        type: "line",
+        data: { labels: [], datasets: [{ label:"HRV Δ% (saved)", data: [] }] },
+        options: { responsive:true, maintainAspectRatio:false, scales:{y:{ticks:{callback:v=>v+"%"}}}, elements:{point:{radius:3}} }
+      });
+      updateChart();
+    } catch(e){ console.warn("Chart disabled:", e); }
+  }
+
+  function updateChart(){
+    if (!state.chart) return;
+    const entries = getEntries().sort((a,b)=>a.ts-b.ts);
+    state.chart.data.labels = entries.map(e=> new Date(e.ts).toLocaleString());
+    state.chart.data.datasets[0].data = entries.map(e=> e.deltaPct!=null ? Number(e.deltaPct.toFixed(1)) : null);
+    state.chart.update();
+  }
+
+  // ---------- CSV (best-effort) ----------
+  function tryLoadCSV(){
+    try {
+      if (!window.Papa){ showError("CSV engine not ready; continuing without Library."); return; }
+      Papa.parse("data/master.csv", {
+        download:true, header:true, skipEmptyLines:true,
+        complete: (res)=>{
+          if (!res || !Array.isArray(res.data)){ showError("Could not parse master.csv"); return; }
+          const rows = res.data; const headers = res.meta?.fields || Object.keys(rows[0]||{});
+          state.csv = { headers, rows };
+          renderDiagnostics(); renderLibrary();
+        },
+        error: ()=> showError("Failed to load master.csv")
+      });
+    } catch(e){ console.warn("CSV load skipped:", e); }
+  }
+
+  // ---------- helpers ----------
+  function pickCol(cands){ for (const c of cands){ const h = state.csv.headers.find(x => (x||"").toLowerCase() === c.toLowerCase()); if (h) return h; } return null; }
+  function escapeHtml(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function n(v){ return v==null? "": String(v); }
 })();
