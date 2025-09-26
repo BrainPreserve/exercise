@@ -1,7 +1,7 @@
-/* Brain Exercise App — CSV Hard-Gate + Unbreakable Tabs (Novice-safe)
-   - UI is locked until /data/master.csv loads (HTTP 200 + parsed rows >= 1)
-   - No guessing: only uses actual columns in your CSV
-   - Tabs and buttons always work; errors show a banner, not a freeze
+/* Brain Exercise App — CSV Hard-Gate (No Worker, No Freeze)
+   - Guarantees CSV loads first, but never hangs on CSP/worker issues
+   - Parses via fetch(text) + Papa.parse (worker:false)
+   - No guessing: uses only columns present in master.csv
 */
 (function () {
   "use strict";
@@ -11,34 +11,74 @@
   const on = (el, ev, fn) => el && el.addEventListener(ev, fn);
   const toNum = (v) => { const n = Number(String(v ?? "").replace(/[^0-9.\-]/g,"")); return Number.isFinite(n)? n : null; };
 
-  const LKEY = "bp_exercise_entries_v5";
-
+  const LKEY = "bp_exercise_entries_v6";
   const state = { csv: { headers: [], rows: [] }, chart: null };
 
-  // ---------------- Boot ----------------
+  // ---------- Boot ----------
   on(window, "DOMContentLoaded", () => {
     bindTabs();
     lockUI("Loading your exercise library…");
-    gateCSV().then(({headers, rows})=>{
-      state.csv = { headers, rows };
-      unlockUI();
-      safeInit();
-    }).catch((err)=>{
-      showError("CSV failed to load: " + err.message + " — Click Reload after you confirm the file is at data/master.csv");
-      lockUI("CSV not available.");
-      // still allow tab switching so you can read the message
-    });
+    loadCSVNoWorker("data/master.csv")
+      .then(({headers, rows}) => {
+        state.csv = { headers, rows };
+        unlockUI();
+        initAll();
+      })
+      .catch((err) => {
+        showError("CSV failed to load/parse: " + err.message);
+        // Unlock tab switching so you can navigate and see diagnostics
+        unlockUI();
+        // Still initialize non-CSV features so Plan/Save/Progress work;
+        // Library/Ask will show “No CSV suggestions” (no hallucination).
+        initAll();
+      });
   });
 
-  function safeInit(){
+  function initAll(){
     try { bindPlan(); } catch(e){ showError("Plan init error"); console.error(e); }
     try { bindAsk(); } catch(e){ showError("Ask init error"); console.error(e); }
     try { renderLibrary(); } catch(e){ showError("Library render error"); console.error(e); }
     try { renderHistory(); } catch(e){ showError("History render error"); console.error(e); }
     try { initChart(); } catch(e){ console.warn("Chart unavailable"); }
+    try { renderDiagnostics(); } catch(e){ /* ignore */ }
   }
 
-  // ---------------- Tabs (always work) ----------------
+  // ---------- CSV loader (no Worker, no CSP issues) ----------
+  async function loadCSVNoWorker(url){
+    if (!window.Papa) throw new Error("PapaParse not loaded");
+    // First attempt (no cache)
+    try {
+      return await fetchAndParse(url, { cache: "no-store" });
+    } catch (e1) {
+      // Retry with a cache-busting query
+      return await fetchAndParse(url + (url.includes("?") ? "&" : "?") + "v=" + Date.now(), { cache: "no-store" });
+    }
+  }
+
+  async function fetchAndParse(url, fetchOpts){
+    const r = await fetch(url, { method: "GET", ...fetchOpts });
+    if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
+    const text = await r.text();
+    const res = Papa.parse(text, { header: true, skipEmptyLines: true, worker: false });
+    const rows = Array.isArray(res?.data) ? res.data : [];
+    const headers = res?.meta?.fields || Object.keys(rows[0] || {});
+    if (!headers.length) throw new Error("Missing header row");
+    if (!rows.length) throw new Error("0 data rows");
+    return { headers, rows };
+  }
+
+  // ---------- Lock/Unlock/Error ----------
+  function lockUI(msg){
+    $$(".btn, .tab").forEach(el => el.setAttribute("disabled","true"));
+    const b = $("#error-banner"); if (b){ b.hidden = false; b.textContent = msg; }
+  }
+  function unlockUI(){
+    $$(".btn, .tab").forEach(el => el.removeAttribute("disabled"));
+    const b = $("#error-banner"); if (b){ b.hidden = true; b.textContent = ""; }
+  }
+  function showError(msg){ const b = $("#error-banner"); if (b){ b.hidden = false; b.textContent = msg; } }
+
+  // ---------- Tabs ----------
   function bindTabs(){
     $$(".tab").forEach(btn=>{
       on(btn,"click",()=>{
@@ -49,59 +89,28 @@
     });
   }
 
-  // ---------------- CSV Hard Gate ----------------
-  async function gateCSV(){
-    const first = await tryLoad("data/master.csv");
-    if (first.ok) return first;
-    const second = await tryLoad("data/master.csv?v=" + Date.now());
-    if (second.ok) return second;
-    throw new Error(second.err || first.err || "Missing or malformed CSV");
+  // ---------- Helpers ----------
+  function colAnyOf(...cand){
+    for (const c of cand){
+      const h = state.csv.headers.find(x => (x||"").toLowerCase() === c.toLowerCase());
+      if (h) return h;
+    }
+    return null;
   }
+  function escapeHtml(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function n(v){ return v==null? "": String(v); }
 
-  function tryLoad(url){
-    return new Promise((resolve)=>{
-      if (!window.Papa) return resolve({ ok:false, err:"PapaParse not loaded" });
-      Papa.parse(url, {
-        download: true, header: true, skipEmptyLines: true, worker: true,
-        complete: (res)=>{
-          try {
-            const rows = Array.isArray(res?.data) ? res.data : [];
-            const headers = res?.meta?.fields || Object.keys(rows[0] || {});
-            if (!rows.length) return resolve({ ok:false, err:"CSV parsed but has 0 rows" });
-            if (!headers.length) return resolve({ ok:false, err:"CSV has no header row" });
-            resolve({ ok:true, headers, rows });
-          } catch(e){ resolve({ ok:false, err:"Parse exception" }); }
-        },
-        error: (e)=> resolve({ ok:false, err:"PapaParse error" }),
-      });
-    });
-  }
-
-  // ---------------- Lock / Unlock UI ----------------
-  function lockUI(msg){
-    const main = $("main"); if (!main) return;
-    // Disable buttons
-    $$(".btn, .tab").forEach(el => el.setAttribute("disabled","true"));
-    // Show message
-    const b = $("#error-banner"); if (b){ b.hidden = false; b.textContent = msg; }
-  }
-  function unlockUI(){
-    $$(".btn, .tab").forEach(el => el.removeAttribute("disabled"));
-    const b = $("#error-banner"); if (b){ b.hidden = true; b.textContent = ""; }
-  }
-  function showError(msg){ const b = $("#error-banner"); if (b){ b.hidden = false; b.textContent = msg; } }
-
-  // ---------------- Plan ----------------
+  // ---------- Plan ----------
   function bindPlan(){
     const form = $("#plan-form");
     const gen  = $("#btn-generate");
     const clr  = $("#btn-clear");
     const sav  = $("#btn-save");
 
-    on(form, "submit", (e)=> e.preventDefault()); // never auto-clear
-    on(gen,  "click", () => { try{ generatePlan(); } catch(e){ showError("Could not generate plan."); } });
-    on(clr,  "click", () => { try{ clearPlanForm(); } catch(e){ /* ignore */ } });
-    on(sav,  "click", () => { try{ saveToday(); } catch(e){ showError("Save failed."); } });
+    on(form, "submit", (e)=> e.preventDefault());
+    on(gen,  "click", generatePlan);
+    on(clr,  "click", clearPlanForm);
+    on(sav,  "click", saveToday);
   }
 
   function getPlanInputs(){
@@ -120,14 +129,6 @@
     };
   }
 
-  function colAnyOf(...cand){
-    for (const c of cand){
-      const h = state.csv.headers.find(x => (x||"").toLowerCase() === c.toLowerCase());
-      if (h) return h;
-    }
-    return null;
-  }
-
   function generatePlan(){
     const o = $("#plan-output"); if (!o) return;
     const v = getPlanInputs();
@@ -140,16 +141,16 @@
       else if (v.deltaPct > 5) lines.push("  → You can emphasize performance or volume.");
     }
     if (v.sleepEff != null){ lines.push(`• Sleep efficiency: ${v.sleepEff}%`); if (v.sleepEff < 80) lines.push("  → Keep today sub-maximal; extend warm-up."); }
-    if (v.sbp != null && v.dbp != null){ lines.push(`• BP: ${v.sbp}/${v.dbp} mmHg`); if (v.sbp>=140 || v.dbp>=90) lines.push("  → Avoid Valsalva; longer rest; stop if symptomatic."); }
+    if (v.sbp != null && v.dbp != null){ lines.push(`• BP: ${v.sbp}/${v.dbp} mmHg`); if (v.sbp>=160 || v.dbp>=90) lines.push("  → Avoid Valsalva; longer rest; stop if symptomatic."); }
     if (v.tir != null){ lines.push(`• CGM TIR 70–180: ${v.tir}%`); if (v.tir < 70) lines.push("  → Prefer steady, low-to-moderate intensity."); }
     if (v.crp != null){ lines.push(`• hs-CRP: ${v.crp} mg/L`); if (v.crp >= 3) lines.push("  → Favor recovery; cap intensity and volume."); }
 
-    // CSV-driven suggestions (only using real columns; no guessing)
-    const rows = state.csv.rows;
-    const titleCol = colAnyOf("title","name","protocol","exercise");
+    // CSV-driven suggestions (only real columns; nothing invented)
+    const rows = state.csv.rows || [];
+    const titleCol = colAnyOf("Exercise Type","title","name","protocol","exercise");
     const coachCol = colAnyOf("coach_script_non_api","coach_script","coach_notes");
-    const typeCol  = colAnyOf("type","category");
-    const muscleCol = state.csv.headers.find(h => /muscle/.test((h||"").toLowerCase()));
+    const typeCol  = colAnyOf("type","category","modality"); // use your real column names if present
+    const muscleCol = colAnyOf("Muscle Mass/Gain Muscle","muscle_mass","muscle");
 
     const aerobicMatch = (r) => {
       const t = (typeCol ? String(r[typeCol]) : "").toLowerCase();
@@ -158,12 +159,13 @@
 
     const picks = [];
     for (const r of rows){
-      if (v.focus === "muscle" || v.focus === "both"){ if (muscleCol && String(r[muscleCol]).trim()==="1") picks.push(r); }
-      if (v.focus === "aerobic" || v.focus === "both"){ if (typeCol && aerobicMatch(r)) picks.push(r); }
+      if ((v.focus === "muscle" || v.focus === "both") && muscleCol && String(r[muscleCol]).trim() === "1") picks.push(r);
+      if ((v.focus === "aerobic" || v.focus === "both") && typeCol && aerobicMatch(r)) picks.push(r);
     }
     const uniq = Array.from(new Set(picks));
+
     lines.push("", "Suggested protocols from CSV:");
-    if (!uniq.length){ lines.push("• No focus-matched items found."); }
+    if (!uniq.length){ lines.push("• No focus-matched items found in CSV."); }
     else {
       uniq.slice(0,6).forEach(r=>{
         const t = titleCol ? String(r[titleCol]) : "(untitled)";
@@ -180,7 +182,7 @@
         .then(r=> r.ok? r.json(): Promise.reject(r.statusText))
         .then(j=>{ if (j && j.text) o.textContent = o.textContent + "\n" + j.text; })
         .catch(()=>{ o.textContent = o.textContent + "\n(AI addendum unavailable; deterministic plan shown.)"; });
-    }catch{ /* ignore */ }
+    }catch{}
   }
 
   function clearPlanForm(){
@@ -201,14 +203,17 @@
     catch { return []; }
   }
 
-  // ---------------- Library ----------------
+  // ---------- Library ----------
   function renderLibrary(){
     const grid = $("#library-grid"); const filters = $("#library-filters");
     if (!grid || !filters) return;
     grid.innerHTML = ""; filters.innerHTML = "";
-    const rows = state.csv.rows;
-    const titleCol = colAnyOf("title","name","protocol","exercise");
-    const typeCol  = colAnyOf("type","category");
+
+    const rows = state.csv.rows || [];
+    if (!rows.length){ grid.innerHTML = `<div class="muted">No CSV rows found.</div>`; return; }
+
+    const titleCol = colAnyOf("Exercise Type","title","name","protocol","exercise");
+    const typeCol  = colAnyOf("type","category","modality");
     const coachCol = colAnyOf("coach_script_non_api","coach_script","coach_notes");
 
     if (typeCol){
@@ -229,24 +234,25 @@
       for (const r of list){
         const card = document.createElement("div"); card.className = "protocol";
         const title = titleCol ? String(r[titleCol]) : "(untitled)";
-        const type  = typeCol ? ` <span class=\"muted\">(${r[typeCol]})</span>` : "";
+        const type  = typeCol ? ` <span class="muted">(${r[typeCol]})</span>` : "";
         const coach = coachCol? String(r[coachCol]||"") : "";
-        card.innerHTML = `<h3>${escapeHtml(title)}${type}</h3>${coach? `<div class=\"muted\">${escapeHtml(coach)}</div>`:""}`;
+        card.innerHTML = `<h3>${escapeHtml(title)}${type}</h3>${coach? `<div class="muted">${escapeHtml(coach)}</div>`:""}`;
         grid.appendChild(card);
       }
     }
     draw(null);
   }
 
-  // ---------------- Ask ----------------
+  // ---------- Ask ----------
   function bindAsk(){
     const btn = $("#ask-btn");
     on(btn,"click", ()=>{
       const out = $("#ask-output"); const inp = $("#ask-input"); if (!out) return;
       const q = String(inp?.value || "").trim();
       const lines = [];
+
       try {
-        const titleCol = colAnyOf("title","name","protocol","exercise");
+        const titleCol = colAnyOf("Exercise Type","title","name","protocol","exercise");
         const coachCol = colAnyOf("coach_script_non_api","coach_script","coach_notes");
         const rows = state.csv.rows || [];
         const matches = q ? rows.filter(r=>{
@@ -260,8 +266,10 @@
           lines.push(`• ${t}`); if (coachCol && r[coachCol]) lines.push(`   – ${String(r[coachCol])}`);
         });
       } catch { lines.push("Deterministic suggestions unavailable."); }
+
       lines.push("", "— AI Addendum —");
       out.textContent = lines.join("\n");
+
       try{
         fetch("/api/coach",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:"ask_addendum", query:q})})
           .then(r=> r.ok? r.json(): Promise.reject(r.statusText))
@@ -271,7 +279,7 @@
     });
   }
 
-  // ---------------- Progress ----------------
+  // ---------- Progress ----------
   function renderHistory(){
     const host = $("#history-table"); if (!host) return;
     const entries = getEntries().sort((a,b)=>a.ts-b.ts);
@@ -308,7 +316,7 @@
     state.chart.update();
   }
 
-  // ---------------- Diagnostics ----------------
+  // ---------- Diagnostics ----------
   function renderDiagnostics(){
     const host = $("#csv-diagnostics"); if (!host) return;
     const { headers, rows } = state.csv;
@@ -319,9 +327,4 @@
       <pre>${escapeHtml(JSON.stringify(sample, null, 2))}</pre>
     `;
   }
-
-  // helpers
-  function n(v){ return v==null? "": String(v); }
-  function escapeHtml(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
-
 })();
