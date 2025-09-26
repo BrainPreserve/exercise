@@ -1,8 +1,6 @@
 /* Brain Exercise App — CSV-first with automatic AI addenda
-   This version:
-   - Restores Type chips + adds a Search box in Library
-   - Fuzzy Ask matching with synonyms & type fallback
-   - Hides Data tab unless #admin or Shift+D pressed 3x
+   Restores Ask tab; prevents null binding; fuzzy Ask; Library filters + search;
+   Data tab hidden unless #admin or Shift+D ×3.
 */
 
 (() => {
@@ -103,8 +101,7 @@
         byId(`tab-${btn.dataset.tab}`).classList.add("active");
       });
     });
-    // if #admin at load, reveal Data
-    maybeShowDataTab("hash");
+    maybeShowDataTab("hash"); // show Data if #admin at load
   }
 
   // ---------- PLAN ----------
@@ -150,13 +147,13 @@
   function captureInputs() {
     const focus = ($$("input[name='focus']:checked")[0] || {}).value || "muscle";
     return {
-      baseline: parseNum(byId("hrvBaseline").value),
-      today: parseNum(byId("hrvToday").value),
-      sleep: parseNum(byId("sleepEff").value),
-      sbp: parseNum(byId("sbp").value),
-      dbp: parseNum(byId("dbp").value),
-      tir: parseNum(byId("tir").value),
-      crp: parseNum(byId("crp").value),
+      baseline: parseNum(byId("hrvBaseline")?.value),
+      today: parseNum(byId("hrvToday")?.value),
+      sleep: parseNum(byId("sleepEff")?.value),
+      sbp: parseNum(byId("sbp")?.value),
+      dbp: parseNum(byId("dbp")?.value),
+      tir: parseNum(byId("tir")?.value),
+      crp: parseNum(byId("crp")?.value),
       focus
     };
   }
@@ -168,7 +165,7 @@
     byId("plan-output").innerText =
       `### Non-API (Deterministic)\n${det}\n\n### GPT-like API Addendum\n${ai || "(no API addendum available)"}`;
   }
-  function onClearForm(){ ["hrvBaseline","hrvToday","sleepEff","sbp","dbp","tir","crp"].forEach(id=>byId(id).value=""); byId("plan-output").textContent=""; }
+  function onClearForm(){ ["hrvBaseline","hrvToday","sleepEff","sbp","dbp","tir","crp"].forEach(id=>{ const el=byId(id); if(el) el.value=""; }); const po=byId("plan-output"); if(po) po.textContent=""; }
   function onSaveToday(){
     const i = captureInputs(); const d = hrvDeltaPct(i.baseline,i.today);
     const rec = {date: todayKey(), hrv_delta_pct: d, sleep:i.sleep, sbp:i.sbp, dbp:i.dbp, tir:i.tir, crp:i.crp, focus:i.focus};
@@ -176,14 +173,14 @@
     renderHistory(); renderHRVChart();
   }
   function initPlan(){
-    byId("btn-generate").onclick = onGeneratePlan;
-    byId("btn-clear").onclick = onClearForm;
-    byId("btn-save").onclick = onSaveToday;
+    byId("btn-generate")?.addEventListener("click", onGeneratePlan);
+    byId("btn-clear")?.addEventListener("click", onClearForm);
+    byId("btn-save")?.addEventListener("click", onSaveToday);
   }
 
   // ---------- LIBRARY ----------
   function renderLibraryFilters() {
-    const wrap = byId("library-filters"); wrap.innerHTML = "";
+    const wrap = byId("library-filters"); if (!wrap) return; wrap.innerHTML = "";
     // Type chips
     ["aerobic","muscular"].forEach(t=>{
       const b=document.createElement("button"); b.className="filter-chip"; b.dataset.type=t; b.textContent=t[0].toUpperCase()+t.slice(1);
@@ -197,16 +194,19 @@
     });
     // Search
     const search = byId("library-search");
-    search.oninput = () => applyLibraryFilters();
-    byId("btn-clear-filters").onclick = () => {
-      $$(".filter-chip", wrap).forEach(c=>c.classList.remove("active"));
-      search.value=""; applyLibraryFilters();
-    };
+    if (search) {
+      search.oninput = () => applyLibraryFilters();
+      byId("btn-clear-filters")?.addEventListener("click", () => {
+        $$(".filter-chip", wrap).forEach(c=>c.classList.remove("active"));
+        search.value=""; applyLibraryFilters();
+      });
+    }
   }
   function applyLibraryFilters() {
+    const grid = byId("library-grid"); if (!grid) return;
     const activeTypes = $$(".filter-chip[data-type].active").map(c=>c.dataset.type);
     const activeGoals = $$(".filter-chip[data-goal].active").map(c=>c.dataset.goal);
-    const q = (byId("library-search").value || "").toLowerCase();
+    const q = (byId("library-search")?.value || "").toLowerCase();
 
     const filtered = PROTOCOLS.filter(p=>{
       const typeOk = !activeTypes.length || activeTypes.includes(p.type);
@@ -241,7 +241,7 @@
     </div>`;
   }
   async function renderLibrary(list){
-    const grid=byId("library-grid"); grid.innerHTML="";
+    const grid=byId("library-grid"); if (!grid) return; grid.innerHTML="";
     const promises=list.map(async p=>{
       const shell=document.createElement("div"); shell.innerHTML=protocolCardHTML(p,""); grid.appendChild(shell.firstElementChild);
       const ai=await buildAIAddendumForProtocol(p);
@@ -253,7 +253,7 @@
   // ---------- ASK (fuzzy + synonyms + type fallback) ----------
   const SYN = new Map(Object.entries({
     walk:["walking","brisk"],
-    hiit:["interval","sprint","repeat"],
+    hiit:["interval","sprint","repeat","tabata"],
     aerobic:["zone 2","cardio","endurance"],
     muscular:["resistance","strength","lifting","weights","hypertrophy"]
   }));
@@ -272,8 +272,8 @@
   }
   async function onAsk(){
     hideError();
-    const qraw = byId("ask-input").value.trim();
-    if(!qraw){ byId("ask-output").textContent="Please enter a question."; return; }
+    const qraw = byId("ask-input")?.value.trim();
+    if(!qraw){ const ao=byId("ask-output"); if(ao) ao.textContent="Please enter a question."; return; }
     const terms = expandTerms(tokenize(qraw));
     let ranked = PROTOCOLS.map(p=>({p,score:fuzzyScore(terms,p)})).filter(x=>x.score>0)
                   .sort((a,b)=>b.score-a.score).slice(0,3).map(x=>x.p);
@@ -290,17 +290,24 @@
         body: JSON.stringify({ mode:"ask", question:qraw, context:ranked.map(p=>({title:p.title,type:p.type,raw:p.raw})) })});
       if(res.ok){ const data=await res.json(); ai=(data.text||data.answer||"").trim(); }
     }catch{}
-    byId("ask-output").textContent =
-      `Non-API (Deterministic)\n${detBlocks.length?detBlocks.join("\n\n"):"• No CSV suggestions."}\n\n`+
-      `GPT-like API Addendum\n${ai || "(no API addendum available)"}`;
+    const out = byId("ask-output");
+    if (out) {
+      out.textContent =
+        `Non-API (Deterministic)\n${detBlocks.length?detBlocks.join("\n\n"):"• No CSV suggestions."}\n\n`+
+        `GPT-like API Addendum\n${ai || "(no API addendum available)"}`;
+    }
   }
-  function initAsk(){ byId("ask-btn").onclick = onAsk; }
+  function initAsk(){
+    const btn = byId("ask-btn");
+    if (btn) btn.addEventListener("click", onAsk); // guard prevents null crash
+  }
 
   // ---------- PROGRESS ----------
   let chart;
   function renderHistory(){
     const rows = store.getHistory().slice().reverse();
     const host = byId("history-table");
+    if(!host) return;
     if(!rows.length){ host.innerHTML="<p class='muted'>No saved days yet.</p>"; return; }
     const headers=["Date","HRV Δ%","Sleep %","SBP","DBP","TIR %","hs-CRP","Focus"];
     const html=["<table><thead><tr>",...headers.map(h=>`<th>${h}</th>`),"</tr></thead><tbody>",
@@ -310,14 +317,16 @@
   }
   function renderHRVChart(){
     const rows=store.getHistory(); const labels=rows.map(r=>r.date); const data=rows.map(r=>r.hrv_delta_pct);
-    const ctx=byId("hrvChart").getContext("2d"); if(chart) chart.destroy();
+    const canvas=byId("hrvChart"); if(!canvas) return;
+    const ctx=canvas.getContext("2d"); if(!ctx) return;
+    if(chart) chart.destroy();
     chart = new Chart(ctx,{ type:"line", data:{ labels, datasets:[{ label:"HRV Δ% vs baseline", data }]},
       options:{ responsive:true, maintainAspectRatio:false, scales:{ y:{ ticks:{ callback:v=>v+"%" }}}}});
   }
 
   // ---------- DIAGNOSTICS ----------
   function renderDiagnostics(headers){
-    const host=byId("csv-diagnostics");
+    const host=byId("csv-diagnostics"); if(!host) return;
     host.textContent = [
       `Rows: ${RAW.length}`,
       `Detected headers: ${headers.join(", ")}`,
