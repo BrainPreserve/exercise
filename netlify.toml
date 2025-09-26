@@ -1,16 +1,11 @@
-[build]
-  publish = "."
-  functions = "netlify/functions"
+# netlify.toml — Optional. Only use if you want stricter CSV handling now.
+# If this file already exists in your repo, you can skip replacing it for now.
+# You can come back later to add the CSV headers block safely.
 
-[[headers]]
-  for = "/*"
-  [headers.values]
-    Strict-Transport-Security = "max-age=31536000; includeSubDomains; preload"
-    Content-Security-Policy = "default-src 'self'; connect-src 'self' https://api.openai.com; img-src 'self' data: blob:; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-ancestors 'none'"
-    X-Frame-Options = "DENY"
-    Permissions-Policy = "geolocation=(), microphone=(), camera=()"
-
-[[redirects]]
-  from = "/api/coach"
-  to = "/.netlify/functions/coach"
-  status = 200
+# [[headers]]
+#   for = "/data/*.csv"
+#   [headers.values]
+#     Content-Type = "text/csv; charset=utf-8"
+#     Cache-Control = "no-store, no-cache, must-revalidate, max-age=0"
+#     Pragma = "no-cache"
+#     Expires = "0"

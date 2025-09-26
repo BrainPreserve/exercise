@@ -2,23 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1, viewport-fit=cover"
-  />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Brain Exercise App</title>
 
-  <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-    rel="stylesheet"
-  />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
-  <!-- Styles -->
   <link rel="stylesheet" href="assets/styles.css" />
 
-  <!-- PapaParse & Chart.js (CDN; no build tools) -->
+  <!-- CSV + Charts via CDN -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
 
@@ -40,46 +32,37 @@
   </header>
 
   <main class="container">
-    <!-- Error banner (fails soft; does not break tabs) -->
     <div id="error-banner" class="error-banner" hidden></div>
 
-    <!-- PLAN -->
-    <section id="tab-plan" class="tabpanel active" role="tabpanel" aria-labelledby="Plan">
+    <section id="tab-plan" class="tabpanel active" role="tabpanel">
       <div class="grid plan-grid">
         <div class="card">
           <h2>Today’s Inputs</h2>
-
           <form id="plan-form" autocomplete="off" novalidate>
             <div class="field">
               <label for="hrvBaseline">HRV 7-day baseline (ms)</label>
               <input id="hrvBaseline" inputmode="decimal" placeholder="e.g., 40" />
             </div>
-
             <div class="field">
               <label for="hrvToday">HRV today (ms)</label>
               <input id="hrvToday" inputmode="decimal" placeholder="e.g., 36" />
             </div>
-
             <div class="field">
               <label for="sleepEff">Sleep efficiency (%)</label>
               <input id="sleepEff" inputmode="decimal" placeholder="e.g., 86" />
             </div>
-
             <div class="field">
               <label for="sbp">SBP (mmHg)</label>
               <input id="sbp" inputmode="decimal" placeholder="e.g., 122" />
             </div>
-
             <div class="field">
               <label for="dbp">DBP (mmHg)</label>
               <input id="dbp" inputmode="decimal" placeholder="e.g., 78" />
             </div>
-
             <div class="field">
               <label for="tir">CGM Time-in-Range 70–180 (%)</label>
               <input id="tir" inputmode="decimal" placeholder="e.g., 78" />
             </div>
-
             <div class="field">
               <label for="crp">hs-CRP (mg/L)</label>
               <input id="crp" inputmode="decimal" placeholder="e.g., 1.2" />
@@ -114,7 +97,6 @@
       </div>
     </section>
 
-    <!-- LIBRARY -->
     <section id="tab-library" class="tabpanel" role="tabpanel">
       <div class="card">
         <div class="library-header">
@@ -128,7 +110,6 @@
       </div>
     </section>
 
-    <!-- PROGRESS -->
     <section id="tab-progress" class="tabpanel" role="tabpanel">
       <div class="card">
         <h2>History</h2>
@@ -136,12 +117,11 @@
       </div>
     </section>
 
-    <!-- ASK -->
     <section id="tab-ask" class="tabpanel" role="tabpanel">
       <div class="card">
         <h2>Ask the Coach</h2>
         <p class="muted">
-          This works without Plan data. Your answer includes deterministic suggestions from the CSV + an AI addendum.
+          Works without Plan data. You’ll see deterministic suggestions from the CSV plus an AI addendum.
         </p>
         <div class="ask-row">
           <input id="ask-input" class="ask-input" placeholder="e.g., Short, joint-friendly session" />
@@ -151,7 +131,6 @@
       </div>
     </section>
 
-    <!-- DATA -->
     <section id="tab-data" class="tabpanel" role="tabpanel">
       <div class="card">
         <h2>CSV Diagnostics</h2>
